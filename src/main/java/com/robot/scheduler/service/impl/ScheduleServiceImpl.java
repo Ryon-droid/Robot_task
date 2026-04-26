@@ -7,6 +7,7 @@ import com.robot.scheduler.entity.Robot;
 import com.robot.scheduler.entity.Task;
 import com.robot.scheduler.mapper.RobotMapper;
 import com.robot.scheduler.mapper.TaskMapper;
+import com.robot.scheduler.service.DataServiceClient;
 import com.robot.scheduler.service.ScheduleService;
 import com.robot.scheduler.service.StateTrackService;
 import com.robot.scheduler.service.TaskPriorityPlanner;
@@ -17,6 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.PostConstruct;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.PriorityBlockingQueue;
@@ -37,6 +40,9 @@ public class ScheduleServiceImpl implements ScheduleService {
 
     @Autowired
     private TaskPriorityPlanner taskPriorityPlanner;
+
+    @Autowired
+    private DataServiceClient dataServiceClient;
 
     // 使用线程安全的 PriorityBlockingQueue
     private PriorityBlockingQueue<Task> taskQueue;
@@ -153,6 +159,10 @@ public class ScheduleServiceImpl implements ScheduleService {
                 "任务分配给机器人 " + robot.getRobotId()
         );
 
+        // 5. 上报数据服务
+        dataServiceClient.reportTaskUpdated(task.getTaskId(), robot.getRobotId(), StatusConstant.TASK_STATUS_RUNNING, task.getDynamicPriorityScore());
+        dataServiceClient.reportTaskStatusChanged(task.getTaskId(), StatusConstant.TASK_STATUS_PENDING, StatusConstant.TASK_STATUS_RUNNING, "任务分配给机器人 " + robot.getRobotId());
+
         log.info("任务 {} 成功分配给机器人 {}", task.getTaskId(), robot.getRobotId());
         return true;
     }
@@ -223,6 +233,18 @@ public class ScheduleServiceImpl implements ScheduleService {
         } catch (Exception e) {
             log.error("处理机器人故障失败: robotId={}", robotId, e);
             throw e;
+        }
+    }
+
+    @Override
+    public List<Task> getPendingQueue() {
+        scheduleLock.lock();
+        try {
+            List<Task> list = new ArrayList<>(taskQueue);
+            Collections.sort(list);
+            return list;
+        } finally {
+            scheduleLock.unlock();
         }
     }
 

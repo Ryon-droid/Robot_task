@@ -62,13 +62,13 @@ robot-scheduler/
 │   │   ├── BusinessException.java         # 业务异常（携带 code）
 │   │   └── GlobalExceptionHandler.java    # 全局异常拦截
 │   ├── config/
-│   │   └── CorsConfig.java                # 跨域配置（全开放）
+│   │   ├── CorsConfig.java                # 跨域配置（全开放）
+│   │   └── AsyncConfig.java               # 异步线程池配置（数据上报）
 │   ├── controller/                        # REST API 层
 │   │   ├── NewTaskController.java         # 任务管理 API  (/api/v1/tasks)
 │   │   ├── RobotController.java           # 机器人前端 API (/api/robots ...)
 │   │   ├── LogController.java             # 日志查询 API   (/api/v1/logs)
-│   │   ├── RobotCallbackController.java   # 机器人状态回调 (/api/v1/scheduler/robot/callback)
-│   │   ├── ScheduleController.java        # 手动触发调度   (/api/v1/scheduler/schedule/trigger)
+│   │   ├── SchedulerExternalController.java # 外部数据服务 API (/scheduler/*)
 │   │   ├── LLMController.java             # LLM 交互      (/api/v1/scheduler/llm/*)
 │   │   └── SLAMController.java            # SLAM 地图管理  (/api/v1/scheduler/slam/*)
 │   ├── entity/                            # 实体类（与数据库表对应）
@@ -86,6 +86,7 @@ robot-scheduler/
 │   │   ├── RobotService.java
 │   │   ├── LogService.java
 │   │   ├── ScheduleService.java
+│   │   ├── DataServiceClient.java         # 数据服务 HTTP 上报客户端
 │   │   ├── LLMService.java
 │   │   ├── SLAMService.java
 │   │   └── StateTrackService.java
@@ -109,7 +110,8 @@ robot-scheduler/
 执行 `db_init.sql` 初始化：
 
 - **`robot`** — 机器人信息（robot_id, robot_name, status, load, battery, x, y, yaw, last_heartbeat）
-- **`task`** — 任务信息（task_id, task_name, command_type, priority, robot_id, robot_code, status, task_params(JSON), 时间戳, fail_reason）
+- **`robot`** — 机器人信息（robot_id, robot_name, robot_code, status, load, battery, x, y, yaw, last_heartbeat）
+- **`task`** — 任务信息（task_id, task_name, command_type, priority, robot_id, robot_code, status, task_params(JSON), 时间戳, fail_reason, deadline, estimated_duration, dynamic_priority_score）
 - **`task_record`** — 任务状态流转记录（record_id, task_id, old_status, new_status, change_time, change_reason）
 - **`log`** — 系统/任务/机器人日志（log_id, log_type, message, reference_id, create_time）
 
@@ -182,13 +184,20 @@ Result.error(code, message);   // 自定义
 
 ### 6.3 机器人管理（RobotServiceImpl）
 - `setRobotGoal` 仅在内存中保存目标点，并生成一条**简化直线路径**（每 0.1m 插值，非真实 A* 路径规划）。
-- `updateRobotPose` 将位姿写入数据库。
+- `updateRobotPose` 将位姿写入数据库，并异步上报位置至数据服务。
+- `emergencyStop` 将机器人状态强制设为 `"故障"`，并上报数据服务。
 
 ### 6.4 LLM 对接（LLMServiceImpl）
 - 通过 **WebSocket Client** 连接外部 LLM 服务，地址由 `llm.websocket.url` 配置（默认 `ws://localhost:8090/ws/llm`）。
 - 超时时间：`llm.websocket.timeout-ms`（默认 5000ms）。
 - 动作类型：`parse_natural_language`、`combine_tasks`、`get_behavior_tree_status`、`execute_behavior_node`。
 - 解析自然语言后生成 `Task`，`commandType` 为 `LLM_PLAN`，`taskParams` 存储 JSON 结构化计划。
+
+### 6.4 数据服务对接（DataServiceClient）
+- 通过 **异步 HTTP 客户端**（`RestTemplate` + `@Async`）与外部数据服务（S-17）通信。
+- 关键事件自动上报：任务创建、状态变更、任务分配、机器人状态/位置、系统日志。
+- 上报带 **幂等键（request_id）** 与 **3 次指数退避重试**，最终失败不阻塞调度主流程。
+- 配置项：`data-service.url`、`data-service.retry.max-attempts`。
 
 ### 6.5 SLAM 管理（SLAMServiceImpl）
 - 当前为**内存 Mock**，重启后数据丢失。
@@ -200,11 +209,10 @@ Result.error(code, message);   // 自定义
 
 > 修改代码前务必关注以下已有不一致，避免引入更严重的状态匹配问题。
 
-1. **任务状态值混用**：
-   - `NewTaskController` / `TaskServiceImpl` 使用英文状态（`QUEUED`、`RUNNING`、`SUCCESS`、`FAILED`）。
-   - `ScheduleServiceImpl` / `RobotCallbackController` / `StateTrackServiceImpl` 使用中文状态（`待执行`、`执行中`、`已完成`、`执行失败`）。
-   - 这导致调度器实际无法匹配到 `TaskServiceImpl` 创建的 `QUEUED` 任务（因为调度器查询的是 `status='待执行'`）。
-   - `StatusConstant.java` 中定义的是中文常量，但 Controller 层并未使用这些常量。
+1. **任务状态值混用（已部分修复）**：
+   - `StatusConstant.java` 当前定义：机器人状态为中文（`空闲`/`忙碌`/`故障`），任务状态为英文（`QUEUED`/`RUNNING`/`SUCCESS`/`FAILED`）。
+   - `ScheduleServiceImpl`、`StateTrackServiceImpl`、`TaskServiceImpl` 已统一使用 `StatusConstant` 常量，核心调度层不再混用。
+   - 但 `AGENTS.md` 历史文档中提到的中文任务状态（`待执行`/`执行中`/`已完成`/`执行失败`）在代码中**已不存在**，若外部系统按旧文档对接需注意。
 
 2. **无测试代码**：项目中没有任何 `src/test` 目录或测试类。
 
@@ -215,6 +223,10 @@ Result.error(code, message);   // 自定义
 5. **SLAM 与路径规划为 Mock**：
    - `SLAMServiceImpl` 数据仅存于内存 HashMap。
    - `RobotServiceImpl.generatePath()` 仅做线性插值，非真实导航路径。
+
+6. **数据服务上报为 Best-Effort**：
+   - `DataServiceClient` 异步上报失败时仅记录日志，无本地持久化失败队列（当前为内存级丢弃）。
+   - 如果数据服务长时间不可用，期间的上报数据会丢失。
 
 ---
 
@@ -240,12 +252,13 @@ mvn clean
 
 - **保持分层**：Controller 只负责参数解析和 `Result` 包装；业务逻辑下沉到 Service。
 - **继续使用 `Result<T>`** 作为所有 REST 接口的返回类型。
-- **状态值统一**：如果修改调度相关逻辑，优先统一使用 `StatusConstant` 中的常量，或统一改为英文状态串，避免中英文混用导致的数据库查询/更新失效。
+- **状态值统一**：如果修改调度相关逻辑，优先统一使用 `StatusConstant` 中的常量（机器人状态为中文，任务状态为英文）。
 - **乐观锁习惯**：对涉及并发修改的表（robot、task）继续使用 `UpdateWrapper` 带条件更新（如 `eq("status", oldStatus)`）。
 - **日志记录**：任务完成、失败、机器人故障等关键事件应调用 `LogService.createLog(...)`。
 - **实体 ID**：新建实体记录时继续使用 `UUID.randomUUID().toString().replace("-", "")`。
+- **数据服务上报**：涉及任务/机器人/日志的关键状态变更，如需同步到数据服务（S-17），在对应 Service 方法中通过 `DataServiceClient` 异步上报，不阻塞主流程。
 - **如需新增表**：
-  1. 在 `db_init.sql` 中补充建表语句；
+  1. 在 `db_init.sql` 中补充建表语句（由数据库管理员维护）；
   2. 在 `entity/` 下新建实体类（`@Data`、`@TableName`、`@TableId`）；
   3. 在 `mapper/` 下新建接口继承 `BaseMapper<T>`；
   4. 按需添加 Service 与 Controller。

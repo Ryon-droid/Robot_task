@@ -3,6 +3,7 @@ package com.robot.scheduler.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.robot.scheduler.entity.Log;
 import com.robot.scheduler.mapper.LogMapper;
+import com.robot.scheduler.service.DataServiceClient;
 import com.robot.scheduler.service.LogService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -16,6 +17,9 @@ public class LogServiceImpl implements LogService {
     @Autowired
     private LogMapper logMapper;
 
+    @Autowired
+    private DataServiceClient dataServiceClient;
+
     @Override
     public Log createLog(String logType, String message, String referenceId) {
         Log log = new Log();
@@ -24,6 +28,7 @@ public class LogServiceImpl implements LogService {
         log.setReferenceId(referenceId);
         log.setCreateTime(new Date());
         logMapper.insert(log);
+        dataServiceClient.reportLog(log);
         return log;
     }
 

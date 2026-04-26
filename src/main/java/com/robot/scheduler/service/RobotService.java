@@ -31,4 +31,9 @@ public interface RobotService {
      * 根据ID获取机器人
      */
     Robot getRobotById(String robotId);
+
+    /**
+     * 紧急停止机器人
+     */
+    boolean emergencyStop(String robotId);
 }

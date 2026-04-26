@@ -40,4 +40,19 @@ public interface TaskService {
      * 获取待执行任务
      */
     List<Task> getPendingTasks();
+
+    /**
+     * 取消任务
+     */
+    boolean cancelTask(String taskId);
+
+    /**
+     * 重新分配任务
+     */
+    boolean reassignTask(String taskId);
+
+    /**
+     * 调整任务优先级
+     */
+    boolean updateTaskPriority(String taskId, Integer priority);
 }

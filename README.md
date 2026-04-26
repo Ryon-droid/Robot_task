@@ -6,12 +6,13 @@ Robot Scheduler 是一个基于 Spring Boot 的机器人任务调度系统，实
 
 ### 核心功能
 - **任务管理**：创建、查询、状态更新，支持动态优先级调度
-- **机器人管理**：列表查询、实时位姿获取、目标点设置
+- **机器人管理**：列表查询、实时位姿获取、目标点设置、紧急停止
 - **智能调度**：优先级队列 + 乐观锁分配，支持多维度动态优先级重算
+- **数据服务对接**：与外部数据服务（S-17）双向 HTTP 通信，关键事件异步上报，暴露 `/scheduler/...` 外部查询/控制接口
 - **LLM 对接**：自然语言指令解析，自动拆分为子任务列表
 - **SLAM 地图**：OccupancyGrid 栅格地图、障碍物/空气墙管理、A* 路径规划
 - **ROS2 通信**：通过 rosbridge_suite 实时接收地图/位姿，下发导航目标
-- **日志记录**：任务完成/失败/状态流转自动记录
+- **日志记录**：任务完成/失败/状态流转自动记录，异步推送至数据服务
 
 ---
 
@@ -39,11 +40,13 @@ robot-scheduler/
 │   │   ├── BusinessException.java         # 业务异常
 │   │   └── GlobalExceptionHandler.java    # 全局异常处理
 │   ├── config/
-│   │   └── CorsConfig.java                # 跨域配置
+│   │   ├── CorsConfig.java                # 跨域配置
+│   │   └── AsyncConfig.java               # 异步线程池配置（数据上报）
 │   ├── controller/                        # 控制器层
-│   │   ├── NewTaskController.java         # 任务管理 API
-│   │   ├── RobotController.java           # 机器人管理 API
-│   │   ├── LogController.java             # 日志查询 API
+│   │   ├── NewTaskController.java         # 任务管理 API（前端）
+│   │   ├── RobotController.java           # 机器人管理 API（前端）
+│   │   ├── LogController.java             # 日志查询 API（前端）
+│   │   ├── SchedulerExternalController.java # 外部数据服务 API（/scheduler/...）
 │   │   ├── SLAMController.java            # SLAM 地图与路径规划 API
 │   │   ├── LLMController.java             # LLM 自然语言解析 API
 │   │   └── RosBridgeController.java       # ROS2 通信状态与导航目标 API
@@ -63,6 +66,7 @@ robot-scheduler/
 │   │   ├── LogService.java
 │   │   ├── ScheduleService.java           # 核心调度接口
 │   │   ├── TaskPriorityPlanner.java       # 动态优先级计算
+│   │   ├── DataServiceClient.java         # 数据服务 HTTP 上报客户端
 │   │   ├── LLMService.java                # LLM WebSocket 交互
 │   │   ├── SLAMService.java               # SLAM 地图与路径规划
 │   │   ├── RosBridgeService.java          # ROS2 WebSocket 通信
@@ -408,6 +412,89 @@ Request:
 }
 ```
 
+### 5.7 外部数据服务接口（/scheduler/...）
+
+> 面向数据服务（S-17）的专用接口，供外部系统查询调度器实时状态与控制任务。
+
+#### 获取机器人列表
+```
+GET /scheduler/robots
+
+Response:
+{
+    "code": 200,
+    "data": [
+        {
+            "robotId": "robot001",
+            "robotName": "机器人1号",
+            "robotCode": "RBT-001",
+            "status": "空闲",
+            "load": 0,
+            "battery": 85,
+            "x": 1.5,
+            "y": 2.0,
+            "yaw": 0.785,
+            "lastHeartbeat": 1760000000000
+        }
+    ]
+}
+```
+
+#### 获取单个机器人详情
+```
+GET /scheduler/robots/{robotId}
+```
+
+#### 获取任务列表
+```
+GET /scheduler/tasks?status=QUEUED&robotId=xxx
+```
+
+#### 获取任务详情
+```
+GET /scheduler/tasks/{taskId}
+```
+
+#### 获取调度队列（按优先级排序）
+```
+GET /scheduler/tasks/queue
+```
+
+#### 取消任务
+```
+POST /scheduler/tasks/{taskId}/cancel
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "taskId": "xxx",
+        "action": "cancel"
+    }
+}
+```
+
+#### 重新分配任务
+```
+POST /scheduler/tasks/{taskId}/reassign
+```
+
+#### 调整任务优先级
+```
+POST /scheduler/tasks/{taskId}/priority
+Content-Type: application/json
+
+Request:
+{
+    "priority": 1
+}
+```
+
+#### 机器人紧急停止
+```
+POST /scheduler/robots/{robotId}/emergency_stop
+```
+
 ---
 
 ## 六、状态常量定义
@@ -476,75 +563,125 @@ rosbridge:
     pose: /amcl_pose
     goal: /goal_pose
   default-robot-code: ""
+
+# 数据服务（S-17）对接配置
+data-service:
+  url: http://localhost:8000          # 数据服务地址
+  connect-timeout-ms: 3000
+  read-timeout-ms: 5000
+  retry:
+    max-attempts: 3
+    backoff-multiplier: 1000
 ```
 
 ---
 
-## 八、数据库初始化
+## 八、数据服务对接架构
 
-执行 `db_init.sql` 创建数据库和表：
+Scheduler 与数据服务（S-17）采用 **HTTP API 双向调用** 方案：
+
+### 通信方向
+
+| 方向 | 触发方 | 接口 | 说明 |
+|------|--------|------|------|
+| Scheduler → 数据服务 | 关键事件后异步上报 | `POST /api/v1/tasks` 等 | 任务创建、状态变更、日志、机器人状态/位置 |
+| 数据服务 → Scheduler | 外部查询/控制 | `GET /scheduler/...` | 查询队列、机器人、任务；取消/重分配任务 |
+
+### 上报事件清单
+
+| 事件 | 上报接口 | 位置 |
+|------|---------|------|
+| 创建任务 | `POST /api/v1/tasks` | `TaskServiceImpl.createTask()` |
+| 任务状态变更 | `POST /api/v1/tasks/{id}/status` | `TaskServiceImpl.updateTaskStatus()` |
+| 任务分配成功 | `PUT /api/v1/tasks/{id}` + 状态变更 | `ScheduleServiceImpl.tryAssignTask()` |
+| 机器人状态更新 | `POST /api/v1/robots/status` | `StateTrackServiceImpl.updateRobotState()` |
+| 机器人位置更新 | `POST /api/v1/navigation/positions` | `RobotServiceImpl.updateRobotPose()` |
+| 系统日志 | `POST /api/v1/logs/operation` 或 `/error` | `LogServiceImpl.createLog()` |
+
+> 所有上报均为**异步执行**（`@Async`），带 **3 次指数退避重试**，最终失败不阻塞调度主流程。
+
+---
+
+## 九、数据库初始化
+
+执行 `db_init.sql` 创建数据库和表（由数据库管理员维护）：
 
 ```sql
--- 创建数据库
-CREATE DATABASE robot_scheduler DEFAULT CHARACTER SET utf8mb4;
+-- Robot Scheduler 数据库初始化脚本（MySQL 8.0+）
+
+CREATE DATABASE IF NOT EXISTS robot_scheduler
+    CHARACTER SET utf8mb4
+    COLLATE utf8mb4_unicode_ci;
+
 USE robot_scheduler;
 
 -- 机器人表
 CREATE TABLE robot (
-    robot_id VARCHAR(32) PRIMARY KEY,
-    robot_name VARCHAR(64) NOT NULL,
-    robot_code VARCHAR(32) UNIQUE COMMENT '机器人编码，用于与ROS/LLM对接',
-    status VARCHAR(16) DEFAULT '空闲',
-    load INT DEFAULT 0,
-    last_heartbeat DATETIME,
-    battery INT DEFAULT 100,
-    x DOUBLE,
-    y DOUBLE,
-    yaw DOUBLE
-);
+    robot_id        VARCHAR(32)     NOT NULL COMMENT '机器人ID（程序生成UUID）',
+    robot_name      VARCHAR(64)     NULL COMMENT '机器人名称',
+    robot_code      VARCHAR(64)     NULL COMMENT '机器人编码',
+    status          VARCHAR(16)     NOT NULL DEFAULT '空闲' COMMENT '状态：空闲 / 忙碌 / 故障',
+    load            INT             NOT NULL DEFAULT 0 COMMENT '当前负载',
+    last_heartbeat  DATETIME        NULL COMMENT '最后心跳时间',
+    battery         INT             NULL COMMENT '电池电量（百分比）',
+    x               DOUBLE          NULL COMMENT '位置X坐标（米）',
+    y               DOUBLE          NULL COMMENT '位置Y坐标（米）',
+    yaw             DOUBLE          NULL COMMENT '朝向角度（弧度）',
+    PRIMARY KEY (robot_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='机器人信息表';
 
 -- 任务表
 CREATE TABLE task (
-    task_id VARCHAR(32) PRIMARY KEY,
-    task_name VARCHAR(64) NOT NULL,
-    command_type VARCHAR(32),
-    priority INT DEFAULT 3,
-    robot_id VARCHAR(32),
-    robot_code VARCHAR(32),
-    status VARCHAR(16) DEFAULT 'QUEUED',
-    task_params JSON,
-    create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    start_time DATETIME,
-    finish_time DATETIME,
-    fail_reason VARCHAR(255),
-    deadline DATETIME NULL COMMENT '任务截止时间',
-    estimated_duration INT DEFAULT 0 COMMENT '预估执行时长(秒)',
-    dynamic_priority_score DOUBLE DEFAULT 0 COMMENT '动态优先级分数(越低越优先)'
-);
+    task_id                 VARCHAR(32)     NOT NULL COMMENT '任务ID（程序生成UUID）',
+    task_name               VARCHAR(128)    NULL COMMENT '任务名称',
+    command_type            VARCHAR(64)     NULL COMMENT '指令类型',
+    priority                INT             NOT NULL DEFAULT 3 COMMENT '优先级 1-5，1最高',
+    robot_id                VARCHAR(32)     NULL COMMENT '分配到的机器人ID',
+    robot_code              VARCHAR(64)     NULL COMMENT '机器人编码',
+    status                  VARCHAR(16)     NOT NULL DEFAULT 'QUEUED' COMMENT '状态：QUEUED / RUNNING / SUCCESS / FAILED',
+    task_params             JSON            NULL COMMENT '任务参数（JSON格式）',
+    create_time             DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    start_time              DATETIME        NULL COMMENT '开始执行时间',
+    finish_time             DATETIME        NULL COMMENT '完成时间',
+    fail_reason             VARCHAR(512)    NULL COMMENT '失败原因',
+    deadline                DATETIME        NULL COMMENT '任务截止时间（动态优先级规划）',
+    estimated_duration      INT             NULL COMMENT '预估执行时长（秒）',
+    dynamic_priority_score  DOUBLE          NULL COMMENT '动态优先级分数（越低越优先）',
+    PRIMARY KEY (task_id),
+    INDEX idx_status (status),
+    INDEX idx_robot_id (robot_id),
+    INDEX idx_create_time (create_time)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='任务信息表';
 
 -- 任务状态记录表
 CREATE TABLE task_record (
-    record_id VARCHAR(32) PRIMARY KEY,
-    task_id VARCHAR(32),
-    old_status VARCHAR(16),
-    new_status VARCHAR(16),
-    change_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-    change_reason VARCHAR(255)
-);
+    record_id       VARCHAR(32)     NOT NULL COMMENT '记录ID（程序生成UUID）',
+    task_id         VARCHAR(32)     NOT NULL COMMENT '关联任务ID',
+    old_status      VARCHAR(16)     NULL COMMENT '变更前状态',
+    new_status      VARCHAR(16)     NULL COMMENT '变更后状态',
+    change_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '变更时间',
+    change_reason   VARCHAR(512)    NULL COMMENT '变更原因',
+    PRIMARY KEY (record_id),
+    INDEX idx_task_id (task_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='任务状态变更记录表';
 
 -- 日志表
 CREATE TABLE log (
-    log_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    log_type VARCHAR(32),
-    message TEXT,
-    reference_id VARCHAR(32),
-    create_time DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+    log_id          BIGINT          NOT NULL AUTO_INCREMENT COMMENT '日志ID（自增）',
+    log_type        VARCHAR(32)     NULL COMMENT '日志类型：TASK / ROBOT / SYSTEM',
+    message         TEXT            NULL COMMENT '日志内容',
+    reference_id    VARCHAR(32)     NULL COMMENT '关联ID（任务ID或机器人ID）',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (log_id),
+    INDEX idx_log_type (log_type),
+    INDEX idx_reference_id (reference_id),
+    INDEX idx_create_time (create_time)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='系统日志表';
 ```
 
 ---
 
-## 九、启动方式
+## 十、启动方式
 
 ```bash
 # 1. 创建数据库并执行 db_init.sql
@@ -569,5 +706,5 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 ---
 
-> **文档版本：** v3.0.0  
+> **文档版本：** v3.1.0  
 > **更新日期：** 2026-04-26

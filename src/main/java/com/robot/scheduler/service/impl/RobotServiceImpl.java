@@ -1,19 +1,26 @@
 package com.robot.scheduler.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.robot.scheduler.common.StatusConstant;
 import com.robot.scheduler.entity.Robot;
 import com.robot.scheduler.mapper.RobotMapper;
+import com.robot.scheduler.service.DataServiceClient;
 import com.robot.scheduler.service.RobotService;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
 
+@Slf4j
 @Service
 public class RobotServiceImpl implements RobotService {
 
     @Autowired
     private RobotMapper robotMapper;
+
+    @Autowired
+    private DataServiceClient dataServiceClient;
 
     // 存储目标点
     private Map<String, Map<String, Object>> robotGoals = new HashMap<>();
@@ -59,6 +66,7 @@ public class RobotServiceImpl implements RobotService {
             robot.setY(y);
             robot.setYaw(yaw);
             robotMapper.updateById(robot);
+            dataServiceClient.reportRobotPosition(robotId, x, y, yaw);
         }
     }
 
@@ -66,7 +74,20 @@ public class RobotServiceImpl implements RobotService {
     public Robot getRobotById(String robotId) {
         return robotMapper.selectById(robotId);
     }
-    
+
+    @Override
+    public boolean emergencyStop(String robotId) {
+        Robot robot = robotMapper.selectById(robotId);
+        if (robot == null) {
+            return false;
+        }
+        robot.setStatus(StatusConstant.ROBOT_STATUS_ERROR);
+        robotMapper.updateById(robot);
+        dataServiceClient.reportRobotStatus(robot);
+        log.info("机器人 {} 已触发紧急停止", robotId);
+        return true;
+    }
+
     /**
      * 生成直线路径（简化版，实际应使用A*等算法）
      */

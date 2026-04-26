@@ -36,3 +36,12 @@ rosbridge:
     pose: /amcl_pose
     goal: /goal_pose
   default-robot-code: ""
+
+# 数据服务对接配置
+data-service:
+  url: http://localhost:8000
+  connect-timeout-ms: 3000
+  read-timeout-ms: 5000
+  retry:
+    max-attempts: 3
+    backoff-multiplier: 1000

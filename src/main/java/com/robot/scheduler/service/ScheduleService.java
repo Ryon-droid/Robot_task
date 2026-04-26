@@ -15,4 +15,7 @@ public interface ScheduleService {
 
     // 从数据库刷新任务队列
     void refreshQueueFromDb();
+
+    // 获取当前内存中的待执行任务队列（按优先级排序）
+    java.util.List<com.robot.scheduler.entity.Task> getPendingQueue();
 }
