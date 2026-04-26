@@ -5,61 +5,75 @@ import com.robot.scheduler.service.SLAMService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.List;
 import java.util.Map;
 
 @RestController
 @RequestMapping("/api/v1/scheduler/slam")
 public class SLAMController {
-    
+
     @Autowired
     private SLAMService slamService;
-    
-    // 获取激光地图数据
-    @GetMapping("/map/data")
+
+    // ==================== 地图管理 ====================
+
+    @GetMapping("/map")
     public Result<Map<String, Object>> getMapData() {
-        Map<String, Object> data = slamService.getMapData();
-        return Result.success(data);
+        return Result.success(slamService.getMapData());
     }
-    
-    // 更新地图数据
-    @PostMapping("/map/update")
+
+    @PostMapping("/map")
     public Result<Map<String, Object>> updateMapData(@RequestBody Map<String, Object> mapData) {
-        Map<String, Object> result = slamService.updateMapData(mapData);
-        return Result.success(result);
+        return Result.success(slamService.updateMapData(mapData));
     }
-    
-    // 重置地图
+
     @PostMapping("/map/reset")
     public Result<Map<String, Object>> resetMap() {
-        Map<String, Object> result = slamService.resetMap();
-        return Result.success(result);
+        return Result.success(slamService.resetMap());
     }
-    
-    // 获取地图状态
+
     @GetMapping("/map/status")
     public Result<Map<String, Object>> getMapStatus() {
-        Map<String, Object> status = slamService.getMapStatus();
-        return Result.success(status);
+        return Result.success(slamService.getMapStatus());
     }
-    
-    // 添加障碍物（如玻璃墙）
-    @PostMapping("/obstacle/add")
+
+    // ==================== 障碍物 / 空气墙 ====================
+
+    @GetMapping("/obstacles")
+    public Result<List<Map<String, Object>>> getObstacles() {
+        return Result.success(slamService.getObstacles());
+    }
+
+    @PostMapping("/obstacles")
     public Result<Map<String, Object>> addObstacle(@RequestBody Map<String, Object> obstacleData) {
-        Map<String, Object> result = slamService.addObstacle(obstacleData);
-        return Result.success(result);
+        return Result.success(slamService.addObstacle(obstacleData));
     }
-    
-    // 删除障碍物
-    @DeleteMapping("/obstacle/remove/{obstacleId}")
+
+    @PutMapping("/obstacles/{obstacleId}")
+    public Result<Map<String, Object>> updateObstacle(
+            @PathVariable String obstacleId,
+            @RequestBody Map<String, Object> obstacleData) {
+        return Result.success(slamService.updateObstacle(obstacleId, obstacleData));
+    }
+
+    @DeleteMapping("/obstacles/{obstacleId}")
     public Result<Map<String, Object>> removeObstacle(@PathVariable String obstacleId) {
-        Map<String, Object> result = slamService.removeObstacle(obstacleId);
-        return Result.success(result);
+        return Result.success(slamService.removeObstacle(obstacleId));
     }
-    
-    // 修改障碍物
-    @PutMapping("/obstacle/update/{obstacleId}")
-    public Result<Map<String, Object>> updateObstacle(@PathVariable String obstacleId, @RequestBody Map<String, Object> obstacleData) {
-        Map<String, Object> result = slamService.updateObstacle(obstacleId, obstacleData);
-        return Result.success(result);
+
+    // ==================== 路径规划 ====================
+
+    @PostMapping("/path/plan")
+    public Result<List<Map<String, Object>>> planPath(@RequestBody Map<String, Object> request) {
+        double startX = parseDouble(request.get("startX"));
+        double startY = parseDouble(request.get("startY"));
+        double goalX = parseDouble(request.get("goalX"));
+        double goalY = parseDouble(request.get("goalY"));
+        return Result.success(slamService.planPath(startX, startY, goalX, goalY));
+    }
+
+    private double parseDouble(Object value) {
+        if (value instanceof Number) return ((Number) value).doubleValue();
+        return value != null ? Double.parseDouble(String.valueOf(value)) : 0.0;
     }
 }

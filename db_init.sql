@@ -6,9 +6,11 @@ USE robot_scheduler;
 CREATE TABLE robot (
     robot_id VARCHAR(32) PRIMARY KEY,
     robot_name VARCHAR(64) NOT NULL,
+    robot_code VARCHAR(32) UNIQUE COMMENT '机器人编码，用于与ROS/LLM对接',
     status VARCHAR(16) DEFAULT '空闲',
     load INT DEFAULT 0,
     last_heartbeat DATETIME,
+    battery INT DEFAULT 100,
     x DOUBLE,
     y DOUBLE,
     yaw DOUBLE
@@ -27,7 +29,10 @@ CREATE TABLE task (
     create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
     start_time DATETIME,
     finish_time DATETIME,
-    fail_reason VARCHAR(255)
+    fail_reason VARCHAR(255),
+    deadline DATETIME NULL COMMENT '任务截止时间',
+    estimated_duration INT DEFAULT 0 COMMENT '预估执行时长(秒)',
+    dynamic_priority_score DOUBLE DEFAULT 0 COMMENT '动态优先级分数(越低越优先)'
 );
 
 -- 任务状态日志表

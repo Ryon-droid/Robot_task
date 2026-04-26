@@ -1,0 +1,846 @@
+openapi: 3.0.3
+info:
+  title: Robot Scheduler API
+  description: |
+    机器人调度系统后端服务接口文档。
+    包含任务管理、机器人管理、调度触发、日志查询、LLM 交互、SLAM 地图管理等模块。
+  version: 1.0.0
+  contact:
+    name: Robot Scheduler Team
+
+servers:
+  - url: http://localhost:8080
+    description: 本地开发环境
+
+tags:
+  - name: 任务管理
+    description: 任务的创建、查询、状态更新
+  - name: 机器人管理
+    description: 机器人列表、位姿、目标点、路径
+  - name: 调度
+    description: 手动触发调度与机器人状态回调
+  - name: 日志
+    description: 系统/任务/机器人日志查询
+  - name: LLM
+    description: 与外部大模型服务的 WebSocket 代理接口
+  - name: SLAM
+    description: 地图与障碍物的内存级管理（Mock）
+
+paths:
+  /api/v1/tasks:
+    post:
+      summary: 创建任务
+      description: 创建新任务并自动触发调度
+      tags:
+        - 任务管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskCreateRequest'
+      responses:
+        '200':
+          description: 创建成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultTaskCreateResponse'
+    get:
+      summary: 获取任务列表
+      description: 支持按状态和机器人ID筛选
+      tags:
+        - 任务管理
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            example: RUNNING
+          description: 任务状态筛选
+        - name: robotId
+          in: query
+          schema:
+            type: string
+          description: 机器人ID筛选
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultTaskListResponse'
+
+  /api/v1/tasks/{taskId}:
+    get:
+      summary: 获取任务详情
+      tags:
+        - 任务管理
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultTaskDetailResponse'
+
+  /api/v1/tasks/{taskId}/status:
+    patch:
+      summary: 更新任务状态
+      description: |
+        更新任务状态。状态值使用英文：QUEUED / RUNNING / SUCCESS / FAILED。
+        更新为 SUCCESS 或 FAILED 时自动记录日志。
+      tags:
+        - 任务管理
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TaskStatusUpdateRequest'
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultTaskStatusResponse'
+
+  /api/robots:
+    get:
+      summary: 获取机器人列表
+      tags:
+        - 机器人管理
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRobotListResponse'
+
+  /api/robots/pose:
+    get:
+      summary: 获取机器人实时位姿
+      tags:
+        - 机器人管理
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRobotPoseListResponse'
+
+  /api/robot/goal:
+    post:
+      summary: 设置机器人目标点
+      description: 在内存中保存目标点并生成简化直线路径
+      tags:
+        - 机器人管理
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RobotGoalRequest'
+      responses:
+        '200':
+          description: 设置成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRobotGoalResponse'
+
+  /api/robot/path:
+    get:
+      summary: 获取机器人规划路径
+      tags:
+        - 机器人管理
+      parameters:
+        - name: robotId
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultRobotPathResponse'
+
+  /api/v1/scheduler/schedule/trigger:
+    post:
+      summary: 手动触发调度
+      description: 立即尝试为队列中的待执行任务分配空闲机器人
+      tags:
+        - 调度
+      responses:
+        '200':
+          description: 触发成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultString'
+
+  /api/v1/scheduler/robot/callback:
+    post:
+      summary: 机器人状态回调
+      description: |
+        机器人执行完任务或发生故障时回调。
+        状态使用中文：已完成 / 执行失败 / 故障。
+      tags:
+        - 调度
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RobotCallbackRequest'
+      responses:
+        '200':
+          description: 回调处理成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultString'
+
+  /api/v1/logs:
+    get:
+      summary: 获取日志列表
+      description: 支持按日志类型或关联ID筛选
+      tags:
+        - 日志
+      parameters:
+        - name: type
+          in: query
+          schema:
+            type: string
+            example: TASK
+          description: 日志类型（TASK / ROBOT / SYSTEM）
+        - name: referenceId
+          in: query
+          schema:
+            type: string
+          description: 关联ID（任务ID或机器人ID）
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultLogListResponse'
+
+  /api/v1/scheduler/llm/parse:
+    post:
+      summary: 自然语言指令解析
+      description: |
+        将自然语言转换为结构化任务计划。
+        内部通过 WebSocket 调用外部 LLM 服务。
+      tags:
+        - LLM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                instruction:
+                  type: string
+                  description: 自然语言指令
+                  example: "去A点取货"
+      responses:
+        '200':
+          description: 解析成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultTask'
+
+  /api/v1/scheduler/llm/task/combine:
+    post:
+      summary: 任务组合与切换
+      description: 多任务组合或切换逻辑
+      tags:
+        - LLM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 任务组合数据
+      responses:
+        '200':
+          description: 操作成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/llm/behavior/status:
+    get:
+      summary: 获取行为树状态
+      tags:
+        - LLM
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/llm/behavior/execute:
+    post:
+      summary: 行为树节点执行
+      tags:
+        - LLM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 行为节点数据
+      responses:
+        '200':
+          description: 执行成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/map/data:
+    get:
+      summary: 获取激光地图数据
+      tags:
+        - SLAM
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/map/update:
+    post:
+      summary: 更新地图数据
+      tags:
+        - SLAM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 地图数据
+      responses:
+        '200':
+          description: 更新成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/map/reset:
+    post:
+      summary: 重置地图
+      description: 清空内存中的地图与障碍物数据
+      tags:
+        - SLAM
+      responses:
+        '200':
+          description: 重置成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/map/status:
+    get:
+      summary: 获取地图状态
+      tags:
+        - SLAM
+      responses:
+        '200':
+          description: 查询成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/obstacle/add:
+    post:
+      summary: 添加障碍物
+      tags:
+        - SLAM
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 障碍物数据
+      responses:
+        '200':
+          description: 添加成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/obstacle/remove/{obstacleId}:
+    delete:
+      summary: 删除障碍物
+      tags:
+        - SLAM
+      parameters:
+        - name: obstacleId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 删除成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+  /api/v1/scheduler/slam/obstacle/update/{obstacleId}:
+    put:
+      summary: 修改障碍物
+      tags:
+        - SLAM
+      parameters:
+        - name: obstacleId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: 障碍物新数据
+      responses:
+        '200':
+          description: 修改成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ResultMap'
+
+components:
+  schemas:
+    Result:
+      type: object
+      properties:
+        code:
+          type: integer
+          description: 状态码
+          example: 200
+        message:
+          type: string
+          description: 响应信息
+          example: "操作成功"
+        data:
+          description: 业务数据
+
+    ResultString:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: string
+              example: "调度触发成功"
+
+    ResultMap:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: object
+              additionalProperties: true
+
+    ResultTask:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/Task'
+
+    Task:
+      type: object
+      properties:
+        taskId:
+          type: string
+          description: 任务ID（UUID）
+        taskName:
+          type: string
+          description: 任务名称
+        commandType:
+          type: string
+          description: 命令类型
+        priority:
+          type: integer
+          description: 优先级 1~5（1最高）
+          example: 3
+        robotId:
+          type: string
+          description: 分配到的机器人ID
+        robotCode:
+          type: string
+          description: 机器人编码
+        status:
+          type: string
+          description: 任务状态
+          example: QUEUED
+        taskParams:
+          type: string
+          description: JSON格式任务参数
+        createTime:
+          type: string
+          format: date-time
+        startTime:
+          type: string
+          format: date-time
+        finishTime:
+          type: string
+          format: date-time
+        failReason:
+          type: string
+          description: 失败原因
+
+    TaskCreateRequest:
+      type: object
+      properties:
+        robotId:
+          type: string
+          description: 指定机器人ID（可选）
+        commandType:
+          type: string
+          description: 命令类型
+          example: NAVIGATE
+        priority:
+          type: integer
+          description: 优先级（默认3）
+          example: 3
+        params:
+          type: object
+          description: 任务参数
+          additionalProperties: true
+          example:
+            target: "A1"
+            speed: 0.5
+
+    TaskCreateResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        robotId:
+          type: string
+        robotCode:
+          type: string
+        commandType:
+          type: string
+        priority:
+          type: integer
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+          description: 时间戳（毫秒）
+        params:
+          type: object
+
+    ResultTaskCreateResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TaskCreateResponse'
+
+    TaskListItem:
+      type: object
+      properties:
+        taskId:
+          type: string
+        robotId:
+          type: string
+        robotCode:
+          type: string
+        commandType:
+          type: string
+        priority:
+          type: integer
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        params:
+          type: string
+          description: JSON字符串
+
+    ResultTaskListResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/TaskListItem'
+
+    TaskDetailResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        robotId:
+          type: string
+        robotCode:
+          type: string
+        commandType:
+          type: string
+        priority:
+          type: integer
+        status:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+        params:
+          type: string
+
+    ResultTaskDetailResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TaskDetailResponse'
+
+    TaskStatusUpdateRequest:
+      type: object
+      properties:
+        status:
+          type: string
+          description: 新状态（RUNNING / SUCCESS / FAILED）
+          example: SUCCESS
+        reason:
+          type: string
+          description: 状态变更原因（失败时必填）
+
+    TaskStatusResponse:
+      type: object
+      properties:
+        taskId:
+          type: string
+        status:
+          type: string
+
+    ResultTaskStatusResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/TaskStatusResponse'
+
+    RobotListItem:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        status:
+          type: string
+          example: 空闲
+        battery:
+          type: integer
+          example: 85
+
+    ResultRobotListResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/RobotListItem'
+
+    RobotPoseItem:
+      type: object
+      properties:
+        id:
+          type: string
+        x:
+          type: number
+          format: double
+          example: 1.25
+        y:
+          type: number
+          format: double
+          example: 3.50
+        yaw:
+          type: number
+          format: double
+          description: 朝向（弧度）
+          example: 0.785
+        status:
+          type: string
+
+    ResultRobotPoseListResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/RobotPoseItem'
+
+    RobotGoalRequest:
+      type: object
+      properties:
+        robotId:
+          type: string
+        x:
+          type: number
+          format: double
+        y:
+          type: number
+          format: double
+        yaw:
+          type: number
+          format: double
+          default: 0.0
+
+    RobotGoalResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: success
+        message:
+          type: string
+        robotId:
+          type: string
+        goal:
+          type: object
+          properties:
+            x:
+              type: number
+            y:
+              type: number
+            yaw:
+              type: number
+
+    ResultRobotGoalResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RobotGoalResponse'
+
+    PathPoint:
+      type: object
+      properties:
+        x:
+          type: number
+          format: double
+        y:
+          type: number
+          format: double
+
+    RobotPathResponse:
+      type: object
+      properties:
+        robotId:
+          type: string
+        path:
+          type: array
+          items:
+            $ref: '#/components/schemas/PathPoint'
+
+    ResultRobotPathResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              $ref: '#/components/schemas/RobotPathResponse'
+
+    RobotCallbackRequest:
+      type: object
+      properties:
+        robotId:
+          type: string
+        taskId:
+          type: string
+        status:
+          type: string
+          description: 中文状态值（已完成 / 执行失败 / 故障）
+          example: "已完成"
+        reason:
+          type: string
+          description: 失败或故障原因
+
+    LogItem:
+      type: object
+      properties:
+        logId:
+          type: integer
+          format: int64
+        type:
+          type: string
+          example: TASK
+        message:
+          type: string
+        referenceId:
+          type: string
+        createdAt:
+          type: integer
+          format: int64
+          description: 时间戳（毫秒）
+
+    ResultLogListResponse:
+      allOf:
+        - $ref: '#/components/schemas/Result'
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: '#/components/schemas/LogItem'

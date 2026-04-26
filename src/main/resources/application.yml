@@ -12,3 +12,27 @@ mybatis-plus:
   mapper-locations: classpath:mapper/*.xml
   configuration:
     map-underscore-to-camel-case: true
+
+scheduler:
+  priority:
+    weight:
+      base: 1.0
+      waiting: 1.0
+      deadline: 1.0
+      type: 1.0
+      robot: 1.0
+    recalculation-interval-ms: 30000
+
+llm:
+  websocket:
+    url: ws://localhost:8090/ws/llm
+    timeout-ms: 5000
+
+rosbridge:
+  websocket:
+    url: ws://localhost:9090
+  topics:
+    map: /map
+    pose: /amcl_pose
+    goal: /goal_pose
+  default-robot-code: ""

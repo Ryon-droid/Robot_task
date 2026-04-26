@@ -7,10 +7,10 @@ public class StatusConstant {
     public static final String ROBOT_STATUS_ERROR = "故障";
 
     // 任务状态
-    public static final String TASK_STATUS_PENDING = "待执行";
-    public static final String TASK_STATUS_RUNNING = "执行中";
-    public static final String TASK_STATUS_COMPLETED = "已完成";
-    public static final String TASK_STATUS_FAILED = "执行失败";
+    public static final String TASK_STATUS_PENDING = "QUEUED";
+    public static final String TASK_STATUS_RUNNING = "RUNNING";
+    public static final String TASK_STATUS_COMPLETED = "SUCCESS";
+    public static final String TASK_STATUS_FAILED = "FAILED";
 
     // 任务优先级（1-5级，1最高）
     public static final int PRIORITY_HIGHEST = 1;

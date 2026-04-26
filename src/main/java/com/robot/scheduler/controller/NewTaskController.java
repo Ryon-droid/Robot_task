@@ -1,13 +1,18 @@
 package com.robot.scheduler.controller;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.robot.scheduler.common.Result;
+import com.robot.scheduler.common.StatusConstant;
 import com.robot.scheduler.entity.Task;
 import com.robot.scheduler.service.TaskService;
 import com.robot.scheduler.service.ScheduleService;
-import com.robot.scheduler.service.LogService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Instant;
+import java.util.Date;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -22,7 +27,7 @@ public class NewTaskController {
     private ScheduleService scheduleService;
 
     @Autowired
-    private LogService logService;
+    private ObjectMapper objectMapper;
 
     /**
      * 创建任务
@@ -40,8 +45,8 @@ public class NewTaskController {
         task.setRobotId(robotId);
         task.setCommandType(commandType);
         task.setPriority(priority != null ? priority : 3);  // 默认优先级3
-        task.setStatus("QUEUED");
-        task.setTaskParams(params != null ? params.toString() : "{}");
+        task.setStatus(StatusConstant.TASK_STATUS_PENDING);
+        task.setTaskParams(serializeParams(params));
         task.setTaskName(commandType + "任务");
 
         // 保存任务
@@ -50,19 +55,7 @@ public class NewTaskController {
         // 触发调度
         scheduleService.triggerSchedule();
 
-        // 构建响应
-        Map<String, Object> response = Map.of(
-            "taskId", createdTask.getTaskId(),
-            "robotId", createdTask.getRobotId(),
-            "robotCode", createdTask.getRobotCode(),
-            "commandType", createdTask.getCommandType(),
-            "priority", createdTask.getPriority(),
-            "status", createdTask.getStatus(),
-            "createdAt", createdTask.getCreateTime().getTime(),
-            "params", params
-        );
-
-        return Result.success(response);
+        return Result.success(buildTaskResponse(createdTask));
     }
 
     /**
@@ -73,22 +66,12 @@ public class NewTaskController {
     public Result<List<Map<String, Object>>> getTaskList(
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String robotId) {
-        
+
         List<Task> tasks = taskService.getTaskList(status, robotId);
         List<Map<String, Object>> response = new java.util.ArrayList<>();
 
         for (Task task : tasks) {
-            Map<String, Object> taskMap = Map.of(
-                "taskId", task.getTaskId(),
-                "robotId", task.getRobotId(),
-                "robotCode", task.getRobotCode(),
-                "commandType", task.getCommandType(),
-                "priority", task.getPriority(),
-                "status", task.getStatus(),
-                "createdAt", task.getCreateTime().getTime(),
-                "params", task.getTaskParams()
-            );
-            response.add(taskMap);
+            response.add(buildTaskResponse(task));
         }
 
         return Result.success(response);
@@ -101,19 +84,7 @@ public class NewTaskController {
     @GetMapping("/{taskId}")
     public Result<Map<String, Object>> getTaskDetail(@PathVariable String taskId) {
         Task task = taskService.getTaskById(taskId);
-        
-        Map<String, Object> response = Map.of(
-            "taskId", task.getTaskId(),
-            "robotId", task.getRobotId(),
-            "robotCode", task.getRobotCode(),
-            "commandType", task.getCommandType(),
-            "priority", task.getPriority(),
-            "status", task.getStatus(),
-            "createdAt", task.getCreateTime().getTime(),
-            "params", task.getTaskParams()
-        );
-
-        return Result.success(response);
+        return Result.success(buildTaskResponse(task));
     }
 
     /**
@@ -124,7 +95,7 @@ public class NewTaskController {
     public Result<Map<String, Object>> updateTaskStatus(
             @PathVariable String taskId,
             @RequestBody Map<String, Object> request) {
-        
+
         String status = (String) request.get("status");
         String reason = (String) request.get("reason");
 
@@ -133,23 +104,56 @@ public class NewTaskController {
 
         if (success) {
             Task task = taskService.getTaskById(taskId);
-            
-            // 任务完成/失败时记录日志
-            if ("SUCCESS".equals(status) || "FAILED".equals(status)) {
-                String logMessage = "任务 " + taskId + " " + (
-                    "SUCCESS".equals(status) ? "完成" : "失败: " + reason
-                );
-                logService.createLog("TASK", logMessage, taskId);
-            }
-
-            Map<String, Object> response = Map.of(
-                "taskId", task.getTaskId(),
-                "status", task.getStatus()
-            );
-
+            Map<String, Object> response = new HashMap<>();
+            response.put("taskId", task.getTaskId());
+            response.put("status", task.getStatus());
             return Result.success(response);
         } else {
             return Result.error("更新状态失败");
+        }
+    }
+
+    /**
+     * 将 Task 实体组装为统一响应 Map
+     */
+    private Map<String, Object> buildTaskResponse(Task task) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("taskId", task.getTaskId());
+        map.put("robotId", task.getRobotId());
+        map.put("robotCode", task.getRobotCode());
+        map.put("commandType", task.getCommandType());
+        map.put("priority", task.getPriority());
+        map.put("status", task.getStatus());
+        map.put("createdAt", task.getCreateTime() != null ? task.getCreateTime().getTime() : null);
+        map.put("params", parseParams(task.getTaskParams()));
+        return map;
+    }
+
+    /**
+     * 将请求参数 Map 序列化为 JSON 字符串
+     */
+    private String serializeParams(Map<String, Object> params) {
+        if (params == null) {
+            return "{}";
+        }
+        try {
+            return objectMapper.writeValueAsString(params);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+
+    /**
+     * 将 taskParams JSON 字符串解析为 Map
+     */
+    private Map<String, Object> parseParams(String taskParams) {
+        if (taskParams == null || taskParams.isEmpty()) {
+            return new HashMap<>();
+        }
+        try {
+            return objectMapper.readValue(taskParams, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return new HashMap<>();
         }
     }
 }

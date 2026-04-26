@@ -19,7 +19,7 @@ public class RobotController {
     private RobotService robotService;
 
     /**
-     * 1️⃣ 获取机器人列表
+     * 获取机器人列表
      * GET /api/robots
      * 返回：id, name, x, y, status
      */
@@ -27,7 +27,7 @@ public class RobotController {
     public Result<List<Map<String, Object>>> getRobots() {
         List<Robot> robots = robotService.getRobotList();
         List<Map<String, Object>> result = new ArrayList<>();
-        
+
         for (Robot robot : robots) {
             Map<String, Object> robotInfo = new HashMap<>();
             robotInfo.put("id", robot.getRobotId());
@@ -37,12 +37,12 @@ public class RobotController {
             robotInfo.put("status", robot.getStatus());
             result.add(robotInfo);
         }
-        
+
         return Result.success(result);
     }
 
     /**
-     * 2️⃣ 实时位置更新
+     * 实时位置更新
      * GET /api/robots/pose
      * 返回：id, x, y, yaw
      */
@@ -50,7 +50,7 @@ public class RobotController {
     public Result<List<Map<String, Object>>> getRobotsPose() {
         List<Robot> robots = robotService.getRobotList();
         List<Map<String, Object>> result = new ArrayList<>();
-        
+
         for (Robot robot : robots) {
             Map<String, Object> pose = new HashMap<>();
             pose.put("id", robot.getRobotId());
@@ -59,12 +59,12 @@ public class RobotController {
             pose.put("yaw", robot.getYaw() != null ? robot.getYaw() : 0.0);
             result.add(pose);
         }
-        
+
         return Result.success(result);
     }
 
     /**
-     * 3️⃣ 设置机器人目标点
+     * 设置机器人目标点
      * POST /api/robot/goal
      * body: { robotId, x, y, yaw }
      */
@@ -74,10 +74,9 @@ public class RobotController {
         Double x = ((Number) goalData.get("x")).doubleValue();
         Double y = ((Number) goalData.get("y")).doubleValue();
         Double yaw = goalData.get("yaw") != null ? ((Number) goalData.get("yaw")).doubleValue() : 0.0;
-        
-        // 调用服务设置目标点
+
         boolean success = robotService.setRobotGoal(robotId, x, y, yaw);
-        
+
         Map<String, Object> result = new HashMap<>();
         if (success) {
             result.put("status", "success");
@@ -88,24 +87,23 @@ public class RobotController {
             result.put("status", "error");
             result.put("message", "机器人不存在或设置失败");
         }
-        
+
         return Result.success(result);
     }
 
     /**
-     * 4️⃣ 获取规划路径
+     * 获取规划路径
      * GET /api/robot/path?robotId=xxx
      * 返回 path 数组
      */
     @GetMapping("/robot/path")
     public Result<Map<String, Object>> getRobotPath(@RequestParam String robotId) {
-        // 从服务获取路径
         List<Map<String, Object>> path = robotService.getRobotPath(robotId);
-        
+
         Map<String, Object> result = new HashMap<>();
         result.put("robotId", robotId);
         result.put("path", path != null ? path : new ArrayList<>());
-        
+
         return Result.success(result);
     }
 }

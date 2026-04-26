@@ -24,9 +24,27 @@ public class Task implements Comparable<Task> {
     private Date finishTime;
     private String failReason;
 
+    // 动态优先级规划相关字段
+    private Date deadline;                 // 任务截止时间
+    private Integer estimatedDuration;     // 预估执行时长(秒)
+    private Double dynamicPriorityScore;   // 动态优先级分数(越低越优先)
+
     @Override
     public int compareTo(Task o) {
-        // 优先级比较，数字越小优先级越高
-        return this.priority - o.priority;
+        if (o == null) return -1;
+
+        // 主排序：dynamicPriorityScore 升序（null 视为最大值）
+        double thisScore = this.dynamicPriorityScore != null ? this.dynamicPriorityScore : Double.MAX_VALUE;
+        double otherScore = o.dynamicPriorityScore != null ? o.dynamicPriorityScore : Double.MAX_VALUE;
+        int scoreCompare = Double.compare(thisScore, otherScore);
+        if (scoreCompare != 0) {
+            return scoreCompare;
+        }
+
+        // 次排序：createTime 升序
+        if (this.createTime == null && o.createTime == null) return 0;
+        if (this.createTime == null) return 1;
+        if (o.createTime == null) return -1;
+        return this.createTime.compareTo(o.createTime);
     }
 }

@@ -1,10 +1,13 @@
 package com.robot.scheduler.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.robot.scheduler.common.StatusConstant;
+import com.robot.scheduler.entity.Robot;
 import com.robot.scheduler.entity.Task;
+import com.robot.scheduler.mapper.RobotMapper;
 import com.robot.scheduler.mapper.TaskMapper;
-import com.robot.scheduler.service.TaskService;
 import com.robot.scheduler.service.LogService;
+import com.robot.scheduler.service.TaskService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,7 +23,13 @@ public class TaskServiceImpl implements TaskService {
     private TaskMapper taskMapper;
 
     @Autowired
+    private RobotMapper robotMapper;
+
+    @Autowired
     private LogService logService;
+
+    @Autowired
+    private TaskPriorityPlannerImpl taskPriorityPlanner;
 
     @Override
     @Transactional
@@ -29,8 +38,14 @@ public class TaskServiceImpl implements TaskService {
             task.setTaskId(UUID.randomUUID().toString().replace("-", ""));
         }
         task.setCreateTime(new Date());
-        task.setStatus("QUEUED");  // 默认为队列状态
+        task.setStatus(StatusConstant.TASK_STATUS_PENDING);  // 默认为队列状态
+
+        // 计算初始动态优先级分数后一次性写入
+        List<Robot> robots = robotMapper.selectList(null);
+        double score = taskPriorityPlanner.calculateScore(task, robots);
+        task.setDynamicPriorityScore(score);
         taskMapper.insert(task);
+
         return task;
     }
 
@@ -42,18 +57,18 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public List<Task> getTaskList(String status, String robotId) {
         QueryWrapper<Task> queryWrapper = new QueryWrapper<>();
-        
+
         if (status != null && !status.isEmpty()) {
             queryWrapper.eq("status", status);
         }
-        
+
         if (robotId != null && !robotId.isEmpty()) {
             queryWrapper.eq("robot_id", robotId);
         }
-        
-        // 按优先级排序
-        queryWrapper.orderByAsc("priority");
-        
+
+        // 按动态优先级分数排序
+        queryWrapper.orderByAsc("dynamic_priority_score", "priority");
+
         return taskMapper.selectList(queryWrapper);
     }
 
@@ -69,24 +84,24 @@ public class TaskServiceImpl implements TaskService {
         if (task == null) {
             return false;
         }
-        
+
         task.setStatus(status);
-        
-        if ("RUNNING".equals(status)) {
+
+        if (StatusConstant.TASK_STATUS_RUNNING.equals(status)) {
             task.setStartTime(new Date());
-        } else if ("SUCCESS".equals(status) || "FAILED".equals(status)) {
+        } else if (StatusConstant.TASK_STATUS_COMPLETED.equals(status) || StatusConstant.TASK_STATUS_FAILED.equals(status)) {
             task.setFinishTime(new Date());
-            if ("FAILED".equals(status)) {
+            if (StatusConstant.TASK_STATUS_FAILED.equals(status)) {
                 task.setFailReason(reason);
             }
-            
+
             // 任务完成/失败时记录日志
             String logMessage = "任务 " + taskId + " " + (
-                "SUCCESS".equals(status) ? "完成" : "失败: " + reason
+                    StatusConstant.TASK_STATUS_COMPLETED.equals(status) ? "完成" : "失败: " + reason
             );
             logService.createLog("TASK", logMessage, taskId);
         }
-        
+
         return taskMapper.updateById(task) > 0;
     }
 
@@ -98,8 +113,8 @@ public class TaskServiceImpl implements TaskService {
     @Override
     public List<Task> getPendingTasks() {
         QueryWrapper<Task> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("status", "QUEUED");
-        queryWrapper.orderByAsc("priority");
+        queryWrapper.eq("status", StatusConstant.TASK_STATUS_PENDING);
+        queryWrapper.orderByAsc("dynamic_priority_score", "priority");
         return taskMapper.selectList(queryWrapper);
     }
 }

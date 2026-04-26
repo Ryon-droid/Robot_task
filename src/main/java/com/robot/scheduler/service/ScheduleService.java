@@ -9,4 +9,10 @@ public interface ScheduleService {
 
     // 处理机器人故障
     void handleRobotError(String robotId);
+
+    // 重新计算所有待执行任务的动态优先级
+    void recalculatePriorities();
+
+    // 从数据库刷新任务队列
+    void refreshQueueFromDb();
 }

@@ -2,6 +2,7 @@ package com.robot.scheduler.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.UpdateWrapper;
+import com.robot.scheduler.common.StatusConstant;
 import com.robot.scheduler.entity.Robot;
 import com.robot.scheduler.entity.TaskRecord;
 import com.robot.scheduler.mapper.RobotMapper;
@@ -55,7 +56,7 @@ public class StateTrackServiceImpl implements StateTrackService {
         updateWrapper.eq("robot_id", robotId);
         
         updateWrapper.set("status", status);
-        if ("空闲".equals(status)) {
+        if (StatusConstant.ROBOT_STATUS_IDLE.equals(status)) {
             updateWrapper.set("load", 0);
         }
         
