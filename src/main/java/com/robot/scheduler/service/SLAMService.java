@@ -1,5 +1,7 @@
 package com.robot.scheduler.service;
 
+import org.springframework.web.multipart.MultipartFile;
+
 import java.util.List;
 import java.util.Map;
 
@@ -7,10 +9,10 @@ public interface SLAMService {
 
     // ========== 地图管理 ==========
 
-    /** 获取地图数据（OccupancyGrid 格式） */
+    /** 获取当前激活地图数据（OccupancyGrid 格式） */
     Map<String, Object> getMapData();
 
-    /** 更新/上传地图数据 */
+    /** 更新/上传地图数据（JSON 格式，保留兼容） */
     Map<String, Object> updateMapData(Map<String, Object> mapData);
 
     /** 重置地图 */
@@ -18,6 +20,18 @@ public interface SLAMService {
 
     /** 获取地图状态 */
     Map<String, Object> getMapStatus();
+
+    /** 上传新地图（PGM + YAML） */
+    Map<String, Object> uploadMap(String mapName, MultipartFile pgmFile, MultipartFile yamlFile);
+
+    /** 切换当前激活地图 */
+    Map<String, Object> switchMap(String mapId);
+
+    /** 获取地图列表（不含二进制数据） */
+    List<Map<String, Object>> listMaps();
+
+    /** 删除地图 */
+    Map<String, Object> deleteMap(String mapId);
 
     // ========== 障碍物 / 空气墙 ==========
 

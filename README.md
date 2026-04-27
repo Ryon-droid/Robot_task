@@ -10,7 +10,7 @@ Robot Scheduler 是一个基于 Spring Boot 的机器人任务调度系统，实
 - **智能调度**：优先级队列 + 乐观锁分配，支持多维度动态优先级重算
 - **数据服务对接**：与外部数据服务（S-17）双向 HTTP 通信，关键事件异步上报，暴露 `/scheduler/...` 外部查询/控制接口
 - **LLM 对接**：自然语言指令解析，自动拆分为子任务列表
-- **SLAM 地图**：OccupancyGrid 栅格地图、障碍物/空气墙管理、A* 路径规划
+- **SLAM 地图**：支持 ROS 标准 `.pgm` + `.yaml` 地图格式解析，MySQL 持久化存储，多地图切换；障碍物/空气墙管理、A* 路径规划；**实时地图快照自动落库（`map_live`），重启可恢复**
 - **ROS2 通信**：通过 rosbridge_suite 实时接收地图/位姿，下发导航目标
 - **日志记录**：任务完成/失败/状态流转自动记录，异步推送至数据服务
 
@@ -54,12 +54,16 @@ robot-scheduler/
 │   │   ├── Task.java                      # 任务实体
 │   │   ├── Robot.java                     # 机器人实体
 │   │   ├── Log.java                       # 日志实体
-│   │   └── TaskRecord.java                # 任务状态流转记录
+│   │   ├── TaskRecord.java                # 任务状态流转记录
+│   │   ├── MapInfo.java                   # SLAM 静态地图实体
+│   │   └── MapLive.java                   # SLAM 实时地图快照实体
 │   ├── mapper/                            # MyBatis Mapper
 │   │   ├── TaskMapper.java
 │   │   ├── RobotMapper.java
 │   │   ├── LogMapper.java
-│   │   └── TaskRecordMapper.java
+│   │   ├── TaskRecordMapper.java
+│   │   ├── MapInfoMapper.java
+│   │   └── MapLiveMapper.java
 │   ├── service/                           # 服务接口
 │   │   ├── TaskService.java
 │   │   ├── RobotService.java
@@ -144,6 +148,41 @@ robot-scheduler/
 | reference_id | VARCHAR(32) | 关联ID |
 | create_time | DATETIME | 创建时间 |
 
+### 3.5 地图表 (map)
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| map_id | VARCHAR(32) | 主键，UUID |
+| map_name | VARCHAR(100) | 地图名称 |
+| pgm_data | LONGBLOB | PGM 栅格图二进制 |
+| yaml_data | TEXT | YAML 元数据文本 |
+| resolution | DOUBLE | 分辨率（米/像素） |
+| origin_x | DOUBLE | 地图原点 X（米） |
+| origin_y | DOUBLE | 地图原点 Y（米） |
+| origin_yaw | DOUBLE | 地图原点偏航角（弧度） |
+| width | INT | 地图宽度（像素） |
+| height | INT | 地图高度（像素） |
+| negate | INT | 是否反转像素值 0/1 |
+| occupied_thresh | DOUBLE | 占用阈值 |
+| free_thresh | DOUBLE | 空闲阈值 |
+| is_active | TINYINT | 是否当前激活 0/1 |
+| create_time | DATETIME | 创建时间 |
+| update_time | DATETIME | 更新时间 |
+
+### 3.6 实时地图快照表 (map_live)
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| live_id | VARCHAR(32) | 主键，固定为 `current` |
+| map_id | VARCHAR(32) | 关联的静态地图 ID |
+| resolution | DOUBLE | 分辨率（米/像素） |
+| width | INT | 地图宽度（像素） |
+| height | INT | 地图高度（像素） |
+| origin_x | DOUBLE | 地图原点 X（米） |
+| origin_y | DOUBLE | 地图原点 Y（米） |
+| origin_yaw | DOUBLE | 地图原点偏航角（弧度） |
+| grid_data | LONGTEXT | 实时栅格数据（JSON 数组） |
+| obstacles | LONGTEXT | 障碍物列表（JSON） |
+| update_time | DATETIME | 更新时间 |
+
 ---
 
 ## 四、核心功能说明
@@ -170,13 +209,15 @@ robot-scheduler/
 - 每个子任务独立生成 `Task` 记录，`commandType` 为动作大写，`robotCode` 为设备编码
 
 ### 4.5 SLAM 服务 (SLAMServiceImpl)
-- **OccupancyGrid 地图**：分辨率、宽高、原点、栅格数据管理
-- **障碍物管理**：支持矩形、圆形、多边形；区分实体障碍物与空气墙
-- **A* 路径规划**：8 方向搜索 + 欧式距离启发函数 + 路径简化
+- **标准地图格式支持**：解析 ROS `.pgm`（P5 二进制灰度图）与 `.yaml` 元数据，自动处理 `negate`、占用/空闲阈值，像素坐标系翻转成地图坐标系
+- **静态地图持久化**：pgm 存 MySQL `LONGBLOB`，yaml 存 `TEXT`，支持多地图记录与切换
+- **实时地图快照**：RosBridge 收到 `/map` 或用户增删改障碍物时，自动将当前内存栅格（含障碍物）写入 `map_live` 表；服务重启后自动恢复，避免丢图
+- **障碍物管理**：在原始地图之上叠加动态障碍物，支持矩形、圆形、多边形；区分实体障碍物与空气墙
+- **A* 路径规划**：8 方向搜索 + 欧式距离启发函数 + 路径简化，同时考虑原始地图障碍与动态障碍物
 
 ### 4.6 ROS2 通信服务 (RosBridgeServiceImpl)
 - WebSocket 客户端连接 `rosbridge_server`
-- 自动订阅 `/map` → 解析后更新内存栅格地图
+- 自动订阅 `/map` → 解析后更新内存栅格地图，并**自动持久化到 `map_live`**
 - 自动订阅 `/amcl_pose` → 解析位姿后更新对应机器人数据库记录
 - 支持通过 `/goal_pose` 向 ROS2 发送真实导航目标
 
@@ -322,6 +363,68 @@ POST /api/v1/scheduler/slam/map
 #### 重置地图
 ```
 POST /api/v1/scheduler/slam/map/reset
+```
+
+#### 上传地图（PGM + YAML）
+```
+POST /api/v1/scheduler/slam/maps/upload
+Content-Type: multipart/form-data
+
+Request:
+- mapName: 地图名称
+- pgmFile: .pgm 二进制文件
+- yamlFile: .yaml 文本文件
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "status": "success",
+        "mapId": "xxx",
+        "message": "地图上传成功"
+    }
+}
+```
+
+#### 切换激活地图
+```
+POST /api/v1/scheduler/slam/maps/{mapId}/switch
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "status": "success",
+        "mapId": "xxx",
+        "message": "地图切换成功"
+    }
+}
+```
+
+#### 获取地图列表
+```
+GET /api/v1/scheduler/slam/maps
+
+Response:
+{
+    "code": 200,
+    "data": [
+        {
+            "mapId": "xxx",
+            "mapName": "默认地图",
+            "resolution": 0.05,
+            "width": 530,
+            "height": 478,
+            "isActive": 1,
+            "createTime": "2026-04-27T10:00:00"
+        }
+    ]
+}
+```
+
+#### 删除地图
+```
+DELETE /api/v1/scheduler/slam/maps/{mapId}
 ```
 
 #### 添加障碍物
@@ -677,6 +780,44 @@ CREATE TABLE log (
     INDEX idx_reference_id (reference_id),
     INDEX idx_create_time (create_time)
 ) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='系统日志表';
+
+-- 地图表
+CREATE TABLE map (
+    map_id          VARCHAR(32)     NOT NULL COMMENT '地图ID（程序生成UUID）',
+    map_name        VARCHAR(100)    NOT NULL COMMENT '地图名称',
+    pgm_data        LONGBLOB        NULL COMMENT 'PGM 栅格图二进制数据',
+    yaml_data       TEXT            NULL COMMENT 'YAML 元数据文本',
+    resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
+    origin_x        DOUBLE          NULL COMMENT '地图原点 X（米）',
+    origin_y        DOUBLE          NULL COMMENT '地图原点 Y（米）',
+    origin_yaw      DOUBLE          NULL COMMENT '地图原点偏航角（弧度）',
+    width           INT             NULL COMMENT '地图宽度（像素）',
+    height          INT             NULL COMMENT '地图高度（像素）',
+    negate          INT             NULL COMMENT '是否反转像素值 0/1',
+    occupied_thresh DOUBLE          NULL COMMENT '占用阈值',
+    free_thresh     DOUBLE          NULL COMMENT '空闲阈值',
+    is_active       TINYINT         NOT NULL DEFAULT 0 COMMENT '是否当前激活 0/1',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (map_id),
+    INDEX idx_is_active (is_active)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='SLAM 地图表';
+
+-- 实时地图快照表
+CREATE TABLE map_live (
+    live_id         VARCHAR(32)     NOT NULL COMMENT '实时地图ID（固定为 current）',
+    map_id          VARCHAR(32)     NULL COMMENT '关联的静态地图ID',
+    resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
+    width           INT             NULL COMMENT '地图宽度（像素）',
+    height          INT             NULL COMMENT '地图高度（像素）',
+    origin_x        DOUBLE          NULL COMMENT '地图原点 X（米）',
+    origin_y        DOUBLE          NULL COMMENT '地图原点 Y（米）',
+    origin_yaw      DOUBLE          NULL COMMENT '地图原点偏航角（弧度）',
+    grid_data       LONGTEXT        NULL COMMENT '实时栅格数据（JSON 数组）',
+    obstacles       LONGTEXT        NULL COMMENT '障碍物列表（JSON）',
+    update_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (live_id)
+) ENGINE = InnoDB DEFAULT CHARSET = utf8mb4 COLLATE = utf8mb4_unicode_ci COMMENT ='SLAM 实时地图快照表';
 ```
 
 ---
@@ -706,5 +847,5 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 ---
 
-> **文档版本：** v3.1.0  
-> **更新日期：** 2026-04-26
+> **文档版本：** v3.2.0  
+> **更新日期：** 2026-04-27

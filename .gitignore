@@ -20,3 +20,9 @@ Thumbs.db
 # Spring Boot
 *.jar
 *.war
+
+# Office documents
+*.docx
+
+# Build tools
+tools/

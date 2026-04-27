@@ -1,17 +1,42 @@
 package com.robot.scheduler.service.impl;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.robot.scheduler.entity.MapInfo;
+import com.robot.scheduler.entity.MapLive;
+import com.robot.scheduler.mapper.MapInfoMapper;
+import com.robot.scheduler.mapper.MapLiveMapper;
 import com.robot.scheduler.service.SLAMService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+import org.yaml.snakeyaml.Yaml;
 
 import javax.annotation.PostConstruct;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 
 @Slf4j
 @Service
 public class SLAMServiceImpl implements SLAMService {
 
-    // ==================== 地图数据 ====================
+    @Autowired
+    private MapInfoMapper mapInfoMapper;
+
+    @Autowired
+    private MapLiveMapper mapLiveMapper;
+
+    @Autowired
+    private ObjectMapper objectMapper;
+
+    // ==================== 当前激活地图（内存缓存） ====================
+
+    private String currentMapId;
 
     /** 地图分辨率（米/像素） */
     private double resolution = 0.05;
@@ -26,7 +51,10 @@ public class SLAMServiceImpl implements SLAMService {
     private double originX = 0.0;
     private double originY = 0.0;
 
-    /** 栅格数据：0=空闲，100=障碍，-1=未知 */
+    /** 原始栅格数据（从 PGM 解析，不含动态障碍物） */
+    private int[] baseGridData = new int[0];
+
+    /** 当前栅格数据（含动态障碍物） */
     private int[] gridData = new int[0];
 
     /** 是否正在建图 */
@@ -40,9 +68,65 @@ public class SLAMServiceImpl implements SLAMService {
 
     @PostConstruct
     public void init() {
-        // 默认创建一个 20m x 20m 的空地图
-        resetMapInternal(20.0, 20.0, 0.05, -10.0, -10.0);
-        log.info("SLAM 地图初始化完成：{}m x {}m，分辨率 {}", 20.0, 20.0, 0.05);
+        // 1. 尝试从数据库加载激活地图
+        MapInfo activeMap = mapInfoMapper.selectOne(
+                new QueryWrapper<MapInfo>().eq("is_active", 1).last("LIMIT 1")
+        );
+        if (activeMap != null) {
+            loadMapToMemory(activeMap);
+            log.info("从数据库加载激活地图: {} ({})", activeMap.getMapName(), activeMap.getMapId());
+            return;
+        }
+
+        // 2. 没有激活地图，尝试导入 slam/guli 作为默认地图
+        try {
+            java.nio.file.Path pgmPath = Paths.get("slam/guli.pgm");
+            java.nio.file.Path yamlPath = Paths.get("slam/guli.yaml");
+            if (Files.exists(pgmPath) && Files.exists(yamlPath)) {
+                byte[] pgmBytes = Files.readAllBytes(pgmPath);
+                String yamlStr = Files.readString(yamlPath, StandardCharsets.UTF_8);
+
+                MapInfo mapInfo = buildMapInfo("默认地图", pgmBytes, yamlStr);
+                mapInfo.setMapId(UUID.randomUUID().toString().replace("-", ""));
+                mapInfo.setIsActive(1);
+                mapInfoMapper.insert(mapInfo);
+
+                loadMapToMemory(mapInfo);
+                log.info("默认地图导入成功: {} ({})", mapInfo.getMapName(), mapInfo.getMapId());
+            } else {
+                // 3. 连默认文件都没有，创建空地图
+                resetMapInternal(20.0, 20.0, 0.05, -10.0, -10.0);
+                log.info("未找到默认地图，初始化空地图");
+            }
+        } catch (Exception e) {
+            log.error("加载默认地图失败", e);
+            resetMapInternal(20.0, 20.0, 0.05, -10.0, -10.0);
+        }
+
+        // 尝试从数据库恢复实时地图（覆盖静态地图的内存状态）
+        try {
+            MapLive live = mapLiveMapper.selectById("current");
+            if (live != null && live.getGridData() != null && !live.getGridData().isEmpty()) {
+                this.currentMapId = live.getMapId();
+                this.resolution = live.getResolution() != null ? live.getResolution() : this.resolution;
+                this.originX = live.getOriginX() != null ? live.getOriginX() : this.originX;
+                this.originY = live.getOriginY() != null ? live.getOriginY() : this.originY;
+                this.width = live.getWidth() != null ? live.getWidth() : this.width;
+                this.height = live.getHeight() != null ? live.getHeight() : this.height;
+                this.gridData = objectMapper.readValue(live.getGridData(), int[].class);
+                this.baseGridData = new int[this.gridData.length];
+                System.arraycopy(this.gridData, 0, this.baseGridData, 0, this.gridData.length);
+                if (live.getObstacles() != null && !live.getObstacles().isEmpty()) {
+                    List<Map<String, Object>> savedObstacles = objectMapper.readValue(
+                            live.getObstacles(), new TypeReference<List<Map<String, Object>>>() {});
+                    this.obstacles.clear();
+                    this.obstacles.addAll(savedObstacles);
+                }
+                log.info("从数据库恢复实时地图: {}x{}，障碍物 {} 个", this.width, this.height, this.obstacles.size());
+            }
+        } catch (Exception e) {
+            log.warn("恢复实时地图失败", e);
+        }
     }
 
     // ==================== 地图管理 ====================
@@ -50,6 +134,7 @@ public class SLAMServiceImpl implements SLAMService {
     @Override
     public Map<String, Object> getMapData() {
         Map<String, Object> result = new HashMap<>();
+        result.put("mapId", currentMapId);
         result.put("resolution", resolution);
         result.put("width", width);
         result.put("height", height);
@@ -79,7 +164,11 @@ public class SLAMServiceImpl implements SLAMService {
         }
         if (mapData.containsKey("data")) {
             this.gridData = parseIntArray(mapData.get("data"));
+            this.baseGridData = new int[this.gridData.length];
+            System.arraycopy(this.gridData, 0, this.baseGridData, 0, this.gridData.length);
         }
+
+        persistMapLive();
 
         Map<String, Object> result = new HashMap<>();
         result.put("status", "success");
@@ -89,12 +178,23 @@ public class SLAMServiceImpl implements SLAMService {
 
     @Override
     public Map<String, Object> resetMap() {
+        obstacles.clear();
+        if (currentMapId != null) {
+            MapInfo mapInfo = mapInfoMapper.selectById(currentMapId);
+            if (mapInfo != null) {
+                loadMapToMemory(mapInfo);
+                Map<String, Object> result = new HashMap<>();
+                result.put("status", "success");
+                result.put("message", "地图已重置为初始状态");
+                return result;
+            }
+        }
         resetMapInternal(20.0, 20.0, 0.05, -10.0, -10.0);
         obstacles.clear();
 
         Map<String, Object> result = new HashMap<>();
         result.put("status", "success");
-        result.put("message", "重置地图成功");
+        result.put("message", "重置地图成功（空地图）");
         return result;
     }
 
@@ -105,14 +205,18 @@ public class SLAMServiceImpl implements SLAMService {
         this.height = (int) Math.ceil(mapHeightMeters / res);
         this.originX = ox;
         this.originY = oy;
+        this.baseGridData = new int[this.width * this.height];
         this.gridData = new int[this.width * this.height];
-        Arrays.fill(this.gridData, 0); // 全部空闲
+        Arrays.fill(this.baseGridData, 0);
+        Arrays.fill(this.gridData, 0);
         this.isMapping = false;
+        this.currentMapId = null;
     }
 
     @Override
     public Map<String, Object> getMapStatus() {
         Map<String, Object> result = new HashMap<>();
+        result.put("mapId", currentMapId);
         result.put("isMapping", isMapping);
         result.put("width", width);
         result.put("height", height);
@@ -120,6 +224,282 @@ public class SLAMServiceImpl implements SLAMService {
         result.put("origin", Map.of("x", originX, "y", originY));
         result.put("obstacleCount", obstacles.size());
         return result;
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> uploadMap(String mapName, MultipartFile pgmFile, MultipartFile yamlFile) {
+        try {
+            byte[] pgmBytes = pgmFile.getBytes();
+            String yamlStr = new String(yamlFile.getBytes(), StandardCharsets.UTF_8);
+
+            MapInfo mapInfo = buildMapInfo(mapName, pgmBytes, yamlStr);
+            mapInfo.setMapId(UUID.randomUUID().toString().replace("-", ""));
+            mapInfo.setIsActive(0);
+            mapInfoMapper.insert(mapInfo);
+
+            Map<String, Object> result = new HashMap<>();
+            result.put("status", "success");
+            result.put("mapId", mapInfo.getMapId());
+            result.put("message", "地图上传成功");
+            return result;
+        } catch (Exception e) {
+            log.error("上传地图失败", e);
+            throw new RuntimeException("上传地图失败: " + e.getMessage());
+        }
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> switchMap(String mapId) {
+        MapInfo target = mapInfoMapper.selectById(mapId);
+        if (target == null) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("status", "error");
+            result.put("message", "地图不存在");
+            return result;
+        }
+
+        if (currentMapId != null) {
+            MapInfo current = new MapInfo();
+            current.setMapId(currentMapId);
+            current.setIsActive(0);
+            mapInfoMapper.updateById(current);
+        }
+
+        MapInfo update = new MapInfo();
+        update.setMapId(mapId);
+        update.setIsActive(1);
+        mapInfoMapper.updateById(update);
+
+        loadMapToMemory(target);
+        obstacles.clear();
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("status", "success");
+        result.put("mapId", mapId);
+        result.put("message", "地图切换成功");
+        return result;
+    }
+
+    @Override
+    public List<Map<String, Object>> listMaps() {
+        List<MapInfo> maps = mapInfoMapper.selectList(
+                new QueryWrapper<MapInfo>().orderByDesc("create_time")
+        );
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (MapInfo m : maps) {
+            Map<String, Object> item = new HashMap<>();
+            item.put("mapId", m.getMapId());
+            item.put("mapName", m.getMapName());
+            item.put("resolution", m.getResolution());
+            item.put("width", m.getWidth());
+            item.put("height", m.getHeight());
+            item.put("originX", m.getOriginX());
+            item.put("originY", m.getOriginY());
+            item.put("originYaw", m.getOriginYaw());
+            item.put("isActive", m.getIsActive());
+            item.put("createTime", m.getCreateTime());
+            result.add(item);
+        }
+        return result;
+    }
+
+    @Override
+    @Transactional
+    public Map<String, Object> deleteMap(String mapId) {
+        if (mapId.equals(currentMapId)) {
+            Map<String, Object> result = new HashMap<>();
+            result.put("status", "error");
+            result.put("message", "不能删除当前激活的地图");
+            return result;
+        }
+        int rows = mapInfoMapper.deleteById(mapId);
+        Map<String, Object> result = new HashMap<>();
+        result.put("status", rows > 0 ? "success" : "error");
+        result.put("message", rows > 0 ? "删除成功" : "地图不存在");
+        return result;
+    }
+
+    // ==================== 内部加载方法 ====================
+
+    private synchronized void loadMapToMemory(MapInfo mapInfo) {
+        this.currentMapId = mapInfo.getMapId();
+        this.resolution = mapInfo.getResolution() != null ? mapInfo.getResolution() : 0.05;
+        this.originX = mapInfo.getOriginX() != null ? mapInfo.getOriginX() : 0.0;
+        this.originY = mapInfo.getOriginY() != null ? mapInfo.getOriginY() : 0.0;
+        this.width = mapInfo.getWidth() != null ? mapInfo.getWidth() : 0;
+        this.height = mapInfo.getHeight() != null ? mapInfo.getHeight() : 0;
+
+        if (mapInfo.getPgmData() != null && mapInfo.getPgmData().length > 0
+                && this.width > 0 && this.height > 0) {
+            PgmHeader header = parsePgmHeader(mapInfo.getPgmData());
+            int negate = mapInfo.getNegate() != null ? mapInfo.getNegate() : 0;
+            double occThresh = mapInfo.getOccupiedThresh() != null ? mapInfo.getOccupiedThresh() : 0.65;
+            double freeThresh = mapInfo.getFreeThresh() != null ? mapInfo.getFreeThresh() : 0.25;
+            this.baseGridData = convertPixelsToGrid(header.pixels, header.width, header.height,
+                    negate, occThresh, freeThresh);
+            this.gridData = new int[this.baseGridData.length];
+            System.arraycopy(this.baseGridData, 0, this.gridData, 0, this.baseGridData.length);
+            applyObstaclesToGrid();
+        } else {
+            int size = this.width * this.height;
+            if (size <= 0) size = 400 * 400; // fallback
+            this.baseGridData = new int[size];
+            this.gridData = new int[size];
+        }
+        this.isMapping = false;
+    }
+
+    private MapInfo buildMapInfo(String mapName, byte[] pgmBytes, String yamlStr) {
+        YamlMeta meta = parseYaml(yamlStr);
+        PgmHeader header = parsePgmHeader(pgmBytes);
+
+        MapInfo mapInfo = new MapInfo();
+        mapInfo.setMapName(mapName);
+        mapInfo.setPgmData(pgmBytes);
+        mapInfo.setYamlData(yamlStr);
+        mapInfo.setResolution(meta.resolution);
+        mapInfo.setOriginX(meta.originX);
+        mapInfo.setOriginY(meta.originY);
+        mapInfo.setOriginYaw(meta.originYaw);
+        mapInfo.setWidth(header.width);
+        mapInfo.setHeight(header.height);
+        mapInfo.setNegate(meta.negate);
+        mapInfo.setOccupiedThresh(meta.occupiedThresh);
+        mapInfo.setFreeThresh(meta.freeThresh);
+        return mapInfo;
+    }
+
+    // ==================== PGM / YAML 解析 ====================
+
+    private static class PgmHeader {
+        int width, height, maxVal;
+        byte[] pixels;
+        PgmHeader(int w, int h, int m, byte[] p) {
+            this.width = w; this.height = h; this.maxVal = m; this.pixels = p;
+        }
+    }
+
+    private static class YamlMeta {
+        String image;
+        double resolution;
+        double originX, originY, originYaw;
+        int negate;
+        double occupiedThresh;
+        double freeThresh;
+    }
+
+    private PgmHeader parsePgmHeader(byte[] data) {
+        int i = 0;
+        int len = data.length;
+
+        while (i < len && isWhitespace(data[i])) i++;
+
+        StringBuilder sb = new StringBuilder();
+        while (i < len && !isWhitespace(data[i])) {
+            sb.append((char) data[i++]);
+        }
+        String magic = sb.toString();
+        if (!"P5".equals(magic)) {
+            throw new IllegalArgumentException("不支持的 PGM 格式: " + magic + "，仅支持 P5");
+        }
+
+        while (i < len) {
+            while (i < len && isWhitespace(data[i])) i++;
+            if (i < len && data[i] == '#') {
+                while (i < len && data[i] != '\n' && data[i] != '\r') i++;
+            } else {
+                break;
+            }
+        }
+
+        int width = readNextInt(data, len, i);
+        i = skipAfterInt(data, len, i);
+
+        int height = readNextInt(data, len, i);
+        i = skipAfterInt(data, len, i);
+
+        int maxVal = readNextInt(data, len, i);
+        i = skipAfterInt(data, len, i);
+
+        // skip exactly one whitespace after maxVal
+        if (i < len && isWhitespace(data[i])) i++;
+
+        int pixelCount = width * height;
+        if (data.length - i < pixelCount) {
+            throw new IllegalArgumentException(
+                    "PGM 数据不完整，期望 " + pixelCount + " 字节，实际 " + (data.length - i));
+        }
+
+        byte[] pixels = new byte[pixelCount];
+        System.arraycopy(data, i, pixels, 0, pixelCount);
+        return new PgmHeader(width, height, maxVal, pixels);
+    }
+
+    private int readNextInt(byte[] data, int len, int start) {
+        int i = start;
+        while (i < len && isWhitespace(data[i])) i++;
+        StringBuilder sb = new StringBuilder();
+        while (i < len && !isWhitespace(data[i])) {
+            sb.append((char) data[i++]);
+        }
+        return Integer.parseInt(sb.toString().trim());
+    }
+
+    private int skipAfterInt(byte[] data, int len, int start) {
+        int i = start;
+        while (i < len && isWhitespace(data[i])) i++;
+        while (i < len && !isWhitespace(data[i])) i++;
+        return i;
+    }
+
+    private boolean isWhitespace(byte b) {
+        return b == ' ' || b == '\t' || b == '\n' || b == '\r';
+    }
+
+    private int[] convertPixelsToGrid(byte[] pixels, int width, int height, int negate,
+                                       double occupiedThresh, double freeThresh) {
+        int[] grid = new int[pixels.length];
+        for (int row = 0; row < height; row++) {
+            for (int col = 0; col < width; col++) {
+                int srcIdx = row * width + col;
+                // PGM 图像 row=0 是顶部，地图坐标 y=0 是底部，需要翻转
+                int dstIdx = (height - 1 - row) * width + col;
+                int pixel = pixels[srcIdx] & 0xFF;
+                double p;
+                if (negate == 0) {
+                    p = (255.0 - pixel) / 255.0;
+                } else {
+                    p = pixel / 255.0;
+                }
+                if (p > occupiedThresh) {
+                    grid[dstIdx] = 100; // occupied
+                } else if (p < freeThresh) {
+                    grid[dstIdx] = 0;   // free
+                } else {
+                    grid[dstIdx] = -1;  // unknown
+                }
+            }
+        }
+        return grid;
+    }
+
+    private YamlMeta parseYaml(String yamlContent) {
+        Yaml yaml = new Yaml();
+        Map<String, Object> map = yaml.load(yamlContent);
+        YamlMeta meta = new YamlMeta();
+        meta.image = (String) map.get("image");
+        meta.resolution = ((Number) map.get("resolution")).doubleValue();
+        @SuppressWarnings("unchecked")
+        List<Number> origin = (List<Number>) map.get("origin");
+        meta.originX = origin.get(0).doubleValue();
+        meta.originY = origin.get(1).doubleValue();
+        meta.originYaw = origin.get(2).doubleValue();
+        meta.negate = map.containsKey("negate") ? ((Number) map.get("negate")).intValue() : 0;
+        meta.occupiedThresh = ((Number) map.get("occupied_thresh")).doubleValue();
+        meta.freeThresh = ((Number) map.get("free_thresh")).doubleValue();
+        return meta;
     }
 
     // ==================== 障碍物 / 空气墙 ====================
@@ -133,19 +513,15 @@ public class SLAMServiceImpl implements SLAMService {
     public Map<String, Object> addObstacle(Map<String, Object> obstacleData) {
         String obstacleId = UUID.randomUUID().toString();
         obstacleData.put("id", obstacleId);
-
-        // 默认类型为 obstacle（实体障碍物），可传 invisible 表示空气墙
         if (!obstacleData.containsKey("type")) {
             obstacleData.put("type", "obstacle");
         }
-
-        // 默认形状 rectangle
         if (!obstacleData.containsKey("shape")) {
             obstacleData.put("shape", "rectangle");
         }
-
         obstacles.add(obstacleData);
         applyObstaclesToGrid();
+        persistMapLive();
 
         Map<String, Object> result = new HashMap<>();
         result.put("status", "success");
@@ -158,8 +534,8 @@ public class SLAMServiceImpl implements SLAMService {
         boolean removed = obstacles.removeIf(o -> obstacleId.equals(o.get("id")));
         if (removed) {
             applyObstaclesToGrid();
+            persistMapLive();
         }
-
         Map<String, Object> result = new HashMap<>();
         result.put("status", removed ? "success" : "error");
         result.put("message", removed ? "删除成功" : "障碍物不存在");
@@ -174,13 +550,12 @@ public class SLAMServiceImpl implements SLAMService {
                 obstacle.clear();
                 obstacle.putAll(obstacleData);
                 applyObstaclesToGrid();
-
+                persistMapLive();
                 Map<String, Object> result = new HashMap<>();
                 result.put("status", "success");
                 return result;
             }
         }
-
         Map<String, Object> result = new HashMap<>();
         result.put("status", "error");
         result.put("message", "障碍物不存在");
@@ -191,11 +566,8 @@ public class SLAMServiceImpl implements SLAMService {
      * 将所有障碍物（含空气墙）标记到栅格地图上
      */
     private void applyObstaclesToGrid() {
-        // 先清空原有障碍标记（保留原始地图数据）
-        for (int i = 0; i < gridData.length; i++) {
-            if (gridData[i] == 100) {
-                gridData[i] = 0;
-            }
+        if (baseGridData != null && gridData != null && baseGridData.length == gridData.length) {
+            System.arraycopy(baseGridData, 0, gridData, 0, baseGridData.length);
         }
 
         for (Map<String, Object> obs : obstacles) {
@@ -221,6 +593,35 @@ public class SLAMServiceImpl implements SLAMService {
                     }
                 }
             }
+        }
+    }
+
+    /**
+     * 将当前实时地图（含栅格与障碍物）持久化到数据库
+     */
+    private void persistMapLive() {
+        try {
+            if (this.gridData == null || this.gridData.length == 0) {
+                return;
+            }
+            MapLive live = new MapLive();
+            live.setLiveId("current");
+            live.setMapId(this.currentMapId);
+            live.setResolution(this.resolution);
+            live.setWidth(this.width);
+            live.setHeight(this.height);
+            live.setOriginX(this.originX);
+            live.setOriginY(this.originY);
+            live.setOriginYaw(0.0);
+            live.setGridData(objectMapper.writeValueAsString(this.gridData));
+            live.setObstacles(objectMapper.writeValueAsString(this.obstacles));
+
+            int rows = mapLiveMapper.updateById(live);
+            if (rows == 0) {
+                mapLiveMapper.insert(live);
+            }
+        } catch (Exception e) {
+            log.error("持久化实时地图失败", e);
         }
     }
 
@@ -256,7 +657,6 @@ public class SLAMServiceImpl implements SLAMService {
     }
 
     private void markPolygon(List<Map<String, Object>> points, int value) {
-        // 简单包围盒法，精确的多边形填充较复杂
         double minX = Double.MAX_VALUE, minY = Double.MAX_VALUE;
         double maxX = -Double.MAX_VALUE, maxY = -Double.MAX_VALUE;
         for (Map<String, Object> p : points) {
@@ -320,7 +720,7 @@ public class SLAMServiceImpl implements SLAMService {
     }
 
     private int getGridValue(int gx, int gy) {
-        if (!isValidGrid(gx, gy)) return 100; // 地图外视为障碍
+        if (!isValidGrid(gx, gy)) return 100;
         return gridData[gy * width + gx];
     }
 
@@ -339,7 +739,6 @@ public class SLAMServiceImpl implements SLAMService {
         int gx = worldToGridX(goalX);
         int gy = worldToGridY(goalY);
 
-        // 检查起点/终点有效性
         if (!isValidGrid(sx, sy) || !isValidGrid(gx, gy)) {
             log.warn("起点或终点在地图外");
             return List.of();
@@ -350,17 +749,13 @@ public class SLAMServiceImpl implements SLAMService {
         }
 
         List<Map<String, Object>> path = aStar(sx, sy, gx, gy);
-
-        // 路径平滑（简单角点削减）
         if (path.size() > 2) {
             path = simplifyPath(path);
         }
-
         return path;
     }
 
     private List<Map<String, Object>> aStar(int sx, int sy, int gx, int gy) {
-        // 8 方向
         int[] dx = {-1, -1, -1, 0, 0, 1, 1, 1};
         int[] dy = {-1, 0, 1, -1, 1, -1, 0, 1};
         double[] dc = {1.414, 1, 1.414, 1, 1, 1.414, 1, 1.414};
@@ -391,7 +786,6 @@ public class SLAMServiceImpl implements SLAMService {
             if (cIdx == goalIdx) {
                 return reconstructPath(cameFrom, cx, cy, sx, sy);
             }
-
             if (closed[cIdx]) continue;
             closed[cIdx] = true;
 
@@ -399,11 +793,8 @@ public class SLAMServiceImpl implements SLAMService {
                 int nx = cx + dx[i];
                 int ny = cy + dy[i];
                 if (!isValidGrid(nx, ny)) continue;
-
                 int nIdx = ny * width + nx;
                 if (closed[nIdx]) continue;
-
-                // 障碍判断（>=50 视为不可通行）
                 if (getGridValue(nx, ny) >= 50) continue;
 
                 double tentativeG = gScore[cIdx] + dc[i];
@@ -415,13 +806,11 @@ public class SLAMServiceImpl implements SLAMService {
                 }
             }
         }
-
         log.warn("A* 未找到路径");
         return List.of();
     }
 
     private double heuristic(int x1, int y1, int x2, int y2) {
-        // 欧氏距离
         double dx = x1 - x2;
         double dy = y1 - y2;
         return Math.sqrt(dx * dx + dy * dy);
@@ -431,7 +820,6 @@ public class SLAMServiceImpl implements SLAMService {
         List<Map<String, Object>> path = new ArrayList<>();
         int cx = gx;
         int cy = gy;
-
         while (true) {
             path.add(Map.of("x", gridToWorldX(cx), "y", gridToWorldY(cy)));
             int idx = cy * width + cx;
@@ -441,32 +829,24 @@ public class SLAMServiceImpl implements SLAMService {
             cx = prev % width;
             cy = prev / width;
         }
-
         Collections.reverse(path);
         return path;
     }
 
-    /**
-     * 简单路径平滑：移除共线中间点
-     */
     private List<Map<String, Object>> simplifyPath(List<Map<String, Object>> path) {
         if (path.size() < 3) return path;
         List<Map<String, Object>> simplified = new ArrayList<>();
         simplified.add(path.get(0));
-
         for (int i = 1; i < path.size() - 1; i++) {
             Map<String, Object> prev = path.get(i - 1);
             Map<String, Object> curr = path.get(i);
             Map<String, Object> next = path.get(i + 1);
-
             double x1 = (Double) prev.get("x");
             double y1 = (Double) prev.get("y");
             double x2 = (Double) curr.get("x");
             double y2 = (Double) curr.get("y");
             double x3 = (Double) next.get("x");
             double y3 = (Double) next.get("y");
-
-            // 检查是否共线（叉积接近 0）
             double cross = (x2 - x1) * (y3 - y2) - (y2 - y1) * (x3 - x2);
             if (Math.abs(cross) > 1e-6) {
                 simplified.add(curr);

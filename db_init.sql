@@ -94,3 +94,53 @@ CREATE TABLE log
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT ='系统日志表';
+
+-- ----------------------------
+-- 表：map（SLAM 地图信息）
+-- ----------------------------
+DROP TABLE IF EXISTS map;
+CREATE TABLE map
+(
+    map_id          VARCHAR(32)     NOT NULL COMMENT '地图ID（程序生成UUID）',
+    map_name        VARCHAR(100)    NOT NULL COMMENT '地图名称',
+    pgm_data        LONGBLOB        NULL COMMENT 'PGM 栅格图二进制数据',
+    yaml_data       TEXT            NULL COMMENT 'YAML 元数据文本',
+    resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
+    origin_x        DOUBLE          NULL COMMENT '地图原点 X（米）',
+    origin_y        DOUBLE          NULL COMMENT '地图原点 Y（米）',
+    origin_yaw      DOUBLE          NULL COMMENT '地图原点偏航角（弧度）',
+    width           INT             NULL COMMENT '地图宽度（像素）',
+    height          INT             NULL COMMENT '地图高度（像素）',
+    negate          INT             NULL COMMENT '是否反转像素值 0/1',
+    occupied_thresh DOUBLE          NULL COMMENT '占用阈值',
+    free_thresh     DOUBLE          NULL COMMENT '空闲阈值',
+    is_active       TINYINT         NOT NULL DEFAULT 0 COMMENT '是否当前激活 0/1',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    update_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (map_id),
+    INDEX idx_is_active (is_active)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='SLAM 地图表';
+
+-- ----------------------------
+-- 表：map_live（SLAM 实时地图快照）
+-- ----------------------------
+DROP TABLE IF EXISTS map_live;
+CREATE TABLE map_live
+(
+    live_id         VARCHAR(32)     NOT NULL COMMENT '实时地图ID（固定为 current）',
+    map_id          VARCHAR(32)     NULL COMMENT '关联的静态地图ID',
+    resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
+    width           INT             NULL COMMENT '地图宽度（像素）',
+    height          INT             NULL COMMENT '地图高度（像素）',
+    origin_x        DOUBLE          NULL COMMENT '地图原点 X（米）',
+    origin_y        DOUBLE          NULL COMMENT '地图原点 Y（米）',
+    origin_yaw      DOUBLE          NULL COMMENT '地图原点偏航角（弧度）',
+    grid_data       LONGTEXT        NULL COMMENT '实时栅格数据（JSON 数组）',
+    obstacles       LONGTEXT        NULL COMMENT '障碍物列表（JSON）',
+    update_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    PRIMARY KEY (live_id)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='SLAM 实时地图快照表';

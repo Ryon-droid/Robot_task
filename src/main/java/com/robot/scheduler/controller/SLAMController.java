@@ -4,6 +4,7 @@ import com.robot.scheduler.common.Result;
 import com.robot.scheduler.service.SLAMService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
@@ -35,6 +36,31 @@ public class SLAMController {
     @GetMapping("/map/status")
     public Result<Map<String, Object>> getMapStatus() {
         return Result.success(slamService.getMapStatus());
+    }
+
+    // ==================== 多地图上传 / 切换 / 列表 ====================
+
+    @PostMapping("/maps/upload")
+    public Result<Map<String, Object>> uploadMap(
+            @RequestParam("mapName") String mapName,
+            @RequestParam("pgmFile") MultipartFile pgmFile,
+            @RequestParam("yamlFile") MultipartFile yamlFile) {
+        return Result.success(slamService.uploadMap(mapName, pgmFile, yamlFile));
+    }
+
+    @PostMapping("/maps/{mapId}/switch")
+    public Result<Map<String, Object>> switchMap(@PathVariable String mapId) {
+        return Result.success(slamService.switchMap(mapId));
+    }
+
+    @GetMapping("/maps")
+    public Result<List<Map<String, Object>>> listMaps() {
+        return Result.success(slamService.listMaps());
+    }
+
+    @DeleteMapping("/maps/{mapId}")
+    public Result<Map<String, Object>> deleteMap(@PathVariable String mapId) {
+        return Result.success(slamService.deleteMap(mapId));
     }
 
     // ==================== 障碍物 / 空气墙 ====================
