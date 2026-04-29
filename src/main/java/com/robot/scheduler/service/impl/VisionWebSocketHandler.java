@@ -50,9 +50,12 @@ public class VisionWebSocketHandler extends TextWebSocketHandler {
         }
 
         String objName = String.valueOf(data.getOrDefault("obj_name", ""));
-        if (objName.isEmpty()) {
-            log.warn("视觉识别数据缺少 obj_name 字段");
-            sendAck(session, false, "missing obj_name");
+        if (objName.isEmpty() || "null".equals(objName)) {
+            objName = String.valueOf(data.getOrDefault("class", ""));
+        }
+        if (objName.isEmpty() || "null".equals(objName)) {
+            log.warn("视觉识别数据缺少 obj_name/class 字段");
+            sendAck(session, false, "missing obj_name or class");
             return;
         }
 

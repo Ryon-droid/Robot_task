@@ -17,7 +17,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class LLMWebSocketReceiveTest {
 
-    private static final String LLM_WEBSOCKET_URL = "ws://172.16.25.192:8090/ws/llm";
+    private static final String LLM_WEBSOCKET_URL = "ws://172.16.26.123:8090/ws/llm";
     private static final long RECEIVE_DURATION_SECONDS = 60;
 
     @Test

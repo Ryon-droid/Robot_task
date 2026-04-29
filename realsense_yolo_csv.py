@@ -169,7 +169,7 @@ try:
 
             # 发送 JSON 数据到接收端
             data_json = {
-                "class": class_name,
+                "obj_name": class_name,
                 "x": cx,
                 "y": cy,
                 "z": round(z,3)

@@ -29,12 +29,8 @@ llm:
     timeout-ms: 5000
 
 rosbridge:
-  websocket:
-    url: ws://localhost:9090
-  topics:
-    map: /map
-    pose: /amcl_pose
-    goal: /goal_pose
+  http:
+    url: http://172.16.25.219:9090
   default-robot-code: ""
 
 # 运动学算法对接配置

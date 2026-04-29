@@ -10,17 +10,18 @@ import java.net.URI;
  * 发送虚拟视觉数据，接收并打印回传的正/逆运动学双报文。
  *
  * 用法：直接运行 main 方法
- * 参数：[算法端IP] [算法端端口]（默认 localhost 8081）
+ * 参数：[算法端IP] [算法端端口]（默认 172.16.25.46 8081）
  */
 public class MotionCommTestClient {
 
     public static void main(String[] args) throws Exception {
-        String host = args.length > 0 ? args[0] : "localhost";
+        String host = args.length > 0 ? args[0] : "172.16.25.46";
         int port = args.length > 1 ? Integer.parseInt(args[1]) : 8081;
-        String url = "ws://" + host + ":" + port + "/ws/motion";
+        String url = "ws://" + host + ":" + port;
 
-        // 虚拟视觉识别数据（模拟视觉端发给后端的数据）
-        String mockVisionData = "{\"obj_name\":\"cup\",\"x\":0.450,\"y\":0.220,\"z\":0.680}";
+        // 虚拟视觉识别数据（模拟视觉端发给机械臂解算端的数据）
+        // cx, cy: 像素坐标（单位：像素）；z: 深度值（单位：米）
+        String mockVisionData = "{\"obj_name\":\"cup\",\"cx\":320,\"cy\":240,\"z\":0.680}";
 
         System.out.println("[运动学通信测试] 将连接: " + url);
 

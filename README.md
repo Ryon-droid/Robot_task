@@ -11,7 +11,7 @@ Robot Scheduler 是一个基于 Spring Boot 的机器人任务调度系统，实
 - **数据服务对接**：与外部数据服务（S-17）双向 HTTP 通信，关键事件异步上报，暴露 `/scheduler/...` 外部查询/控制接口
 - **LLM 对接**：自然语言指令解析，自动拆分为子任务列表
 - **SLAM 地图**：支持 ROS 标准 `.pgm` + `.yaml` 地图格式解析，MySQL 持久化存储，多地图切换；障碍物/空气墙管理、A* 路径规划；**实时地图快照自动落库（`map_live`），重启可恢复**
-- **ROS2 通信**：通过 rosbridge_suite 实时接收地图/位姿，下发导航目标
+- **ROS2 通信**：通过 HTTP REST API 与 SLAM 端（http_scheduler_bridge.py）对接，轮询位姿、下发导航目标
 - **视觉-运动学算法对接**：接收视觉识别结果并转发给运动学算法端，逆运动学求解成功后自动创建抓取任务并触发调度
 - **日志记录**：任务完成/失败/状态流转自动记录，异步推送至数据服务
 
@@ -81,7 +81,7 @@ robot-scheduler/
 │   │   ├── LLMService.java                # LLM WebSocket 交互
 │   │   ├── MotionService.java             # 视觉-运动学算法 WebSocket 通信
 │   │   ├── SLAMService.java               # SLAM 地图与路径规划
-│   │   ├── RosBridgeService.java          # ROS2 WebSocket 通信
+│   │   ├── RosBridgeService.java          # ROS2 HTTP 通信
 │   │   └── StateTrackService.java         # 状态变更追踪
 │   └── service/impl/                      # 服务实现
 │       ├── TaskServiceImpl.java
@@ -91,7 +91,7 @@ robot-scheduler/
 │       ├── TaskPriorityPlannerImpl.java   # 5 维动态优先级评分
 │       ├── LLMServiceImpl.java
 │       ├── SLAMServiceImpl.java           # OccupancyGrid + A*
-│       ├── RosBridgeServiceImpl.java      # rosbridge WebSocket 客户端
+│       ├── RosBridgeServiceImpl.java      # ROS2 HTTP 客户端（GET 轮询位姿、POST 导航目标）
 │       ├── StateTrackServiceImpl.java
 │       ├── MotionServiceImpl.java         # 运动学算法 WebSocket 客户端
 │       └── VisionWebSocketHandler.java    # 视觉识别 WebSocket 服务端处理器
@@ -241,11 +241,10 @@ robot-scheduler/
 - **A* 路径规划**：8 方向搜索 + 欧式距离启发函数 + 路径简化
 
 ### 4.7 ROS2 通信服务 (RosBridgeServiceImpl)
-- WebSocket 客户端连接 `rosbridge_server`
-- 自动订阅 `/map` → 解析后更新内存栅格地图，并**自动持久化到 `map_live`**
-- 自动订阅 `/amcl_pose` → 解析位姿后更新对应机器人数据库记录
-- 支持通过 `/goal_pose` 向 ROS2 发送真实导航目标
-- 30 秒健康检查与 10 秒重连冷却
+- 通过 **HTTP REST API** 与 SLAM 端 `http_scheduler_bridge.py` 通信（默认 `http://172.16.25.219:9090`）。
+- **位姿获取**：每 1 秒 `GET /api/v1/scheduler/ros/pose` 轮询机器人位姿，解析后更新对应机器人数据库记录。
+- **导航目标下发**：`POST /api/v1/scheduler/ros/goal` 发送导航目标，支持 `{x, y, yaw}` 简写格式；调用前会先更新内存目标与 Mock 路径。
+- **健康检查**：`GET /healthz` 查询 SLAM 端存活状态。
 
 ### 4.8 日志服务 (LogServiceImpl)
 - 任务完成/失败自动写入 `log` 表
@@ -525,9 +524,9 @@ Response:
     "code": 200,
     "data": {
         "connected": true,
-        "url": "ws://localhost:9090",
-        "mapMessageCount": 120,
-        "poseMessageCount": 500
+        "httpUrl": "http://172.16.25.219:9090",
+        "poseFetchCount": 500,
+        "goalSendCount": 12
     }
 }
 ```
@@ -545,6 +544,8 @@ Request:
     "yaw": 0.0
 }
 ```
+
+> 后端会将该目标通过 HTTP POST 转发到 SLAM 端的 `/api/v1/scheduler/ros/goal` 接口。
 
 ### 5.7 视觉-运动学算法通信
 
@@ -766,12 +767,8 @@ llm:
     timeout-ms: 5000
 
 rosbridge:
-  websocket:
-    url: ws://localhost:9090
-  topics:
-    map: /map
-    pose: /amcl_pose
-    goal: /goal_pose
+  http:
+    url: http://172.16.25.219:9090
   default-robot-code: ""
 
 # 运动学算法对接配置
@@ -952,11 +949,11 @@ http://localhost:8080
 
 ### ROS2 通信启动（Ubuntu 侧）
 ```bash
-# 安装 rosbridge_suite
-sudo apt install ros-<distro>-rosbridge-suite
+# 启动 http_scheduler_bridge.py HTTP 桥接
+ros2 launch cod_bringup scheduler_bridge.launch.py
 
-# 启动 WebSocket 桥接
-ros2 launch rosbridge_server rosbridge_websocket_launch.xml
+# 如需指定端口（默认 8080，可按实际情况修改）
+ros2 launch cod_bringup scheduler_bridge.launch.py http_port:=9090
 ```
 
 ---

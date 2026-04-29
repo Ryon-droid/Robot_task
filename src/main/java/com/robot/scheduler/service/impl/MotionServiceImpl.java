@@ -39,7 +39,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Service
 public class MotionServiceImpl implements MotionService {
 
-    @Value("${motion.websocket.url:ws://localhost:8081/ws/motion}")
+    @Value("${motion.websocket.url:ws://localhost:8081}")
     private String motionWebSocketUrl;
 
     @Value("${motion.websocket.timeout-ms:10000}")
@@ -139,13 +139,13 @@ public class MotionServiceImpl implements MotionService {
         try {
             Map<String, Object> msg = new LinkedHashMap<>();
             msg.put("obj_name", objName);
-            msg.put("x", x);
-            msg.put("y", y);
+            msg.put("cx", x);
+            msg.put("cy", y);
             msg.put("z", z);
 
             String payload = objectMapper.writeValueAsString(msg);
             session.sendMessage(new TextMessage(payload));
-            log.info("发送目标物体至运动学算法端: obj_name={}, xyz=({},{},{})", objName, x, y, z);
+            log.info("发送目标物体至运动学算法端: obj_name={}, cxcy=({},{},{})", objName, x, y, z);
 
             // 清空上次结果，等待新报文
             lastForwardKinematics = null;
