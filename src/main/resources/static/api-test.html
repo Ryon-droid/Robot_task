@@ -1,0 +1,936 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Robot Scheduler API 测试工具</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+        .header h1 { font-size: 24px; margin-bottom: 10px; }
+        .config-bar {
+            background: white;
+            padding: 15px 20px;
+            border-bottom: 1px solid #e8e8e8;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+        .config-bar label { font-weight: 600; color: #555; }
+        .config-bar input {
+            padding: 8px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            font-size: 14px;
+            min-width: 280px;
+        }
+        .config-bar button {
+            padding: 8px 20px;
+            background: #1890ff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .config-bar button:hover { background: #40a9ff; }
+        .main {
+            display: flex;
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+            gap: 20px;
+            min-height: calc(100vh - 180px);
+        }
+        .sidebar {
+            width: 200px;
+            flex-shrink: 0;
+        }
+        .nav-item {
+            padding: 12px 16px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 500;
+            color: #555;
+            transition: all 0.2s;
+            background: white;
+            border: 1px solid #e8e8e8;
+        }
+        .nav-item:hover { background: #e6f7ff; color: #1890ff; border-color: #91d5ff; }
+        .nav-item.active { background: #1890ff; color: white; border-color: #1890ff; }
+        .content {
+            flex: 1;
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+        }
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #f0f0f0;
+            color: #222;
+        }
+        .api-card {
+            background: #fafbfc;
+            border: 1px solid #e8e8e8;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: box-shadow 0.2s;
+        }
+        .api-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.06); }
+        .api-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+        .method {
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .method.get { background: #e6f7ff; color: #096dd9; }
+        .method.post { background: #f6ffed; color: #389e0d; }
+        .method.patch { background: #fff7e6; color: #d46b08; }
+        .method.put { background: #fff2e8; color: #ad6800; }
+        .method.delete { background: #fff1f0; color: #cf1322; }
+        .api-path {
+            font-family: "SFMono-Regular", Consolas, monospace;
+            font-size: 14px;
+            color: #333;
+            font-weight: 600;
+        }
+        .api-desc {
+            font-size: 13px;
+            color: #888;
+            margin-bottom: 15px;
+        }
+        .form-row {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+            align-items: flex-end;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            flex: 1;
+            min-width: 180px;
+        }
+        .form-group.full { width: 100%; flex: none; }
+        .form-group label {
+            font-size: 13px;
+            font-weight: 600;
+            color: #555;
+        }
+        .form-group input, .form-group textarea, .form-group select {
+            padding: 8px 12px;
+            border: 1px solid #d9d9d9;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        .form-group textarea {
+            min-height: 80px;
+            resize: vertical;
+            font-family: "SFMono-Regular", Consolas, monospace;
+        }
+        .btn-send {
+            padding: 10px 24px;
+            background: #52c41a;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            height: fit-content;
+        }
+        .btn-send:hover { background: #73d13d; }
+        .result-panel {
+            margin-top: 15px;
+            background: #1e1e1e;
+            color: #d4d4d4;
+            border-radius: 8px;
+            padding: 16px;
+            font-family: "SFMono-Regular", Consolas, monospace;
+            font-size: 13px;
+            max-height: 300px;
+            overflow: auto;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .result-panel:empty::before {
+            content: "点击发送后此处显示响应结果...";
+            color: #666;
+        }
+        .hidden { display: none !important; }
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 15px;
+            border-bottom: 1px solid #e8e8e8;
+            padding-bottom: 10px;
+        }
+        .tab-btn {
+            padding: 6px 16px;
+            border: 1px solid #d9d9d9;
+            background: white;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        .tab-btn.active { background: #1890ff; color: white; border-color: #1890ff; }
+        .hint { font-size: 12px; color: #999; margin-top: 4px; }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🤖 Robot Scheduler API 测试工具</h1>
+        <p>前端通信测试页面 — 可直接测试所有 REST API 接口</p>
+    </div>
+
+    <div class="config-bar">
+        <label>API 基础地址：</label>
+        <input type="text" id="baseUrl" value="http://localhost:8080" />
+        <button onclick="checkHealth()">🩺 健康检查</button>
+        <span id="healthStatus" style="font-size:13px;color:#888;"></span>
+    </div>
+
+    <div class="main">
+        <div class="sidebar">
+            <div class="nav-item active" onclick="showSection('task')">📋 任务管理</div>
+            <div class="nav-item" onclick="showSection('robot')">🤖 机器人管理</div>
+            <div class="nav-item" onclick="showSection('log')">📜 日志查询</div>
+            <div class="nav-item" onclick="showSection('slam')">🗺️ SLAM 地图</div>
+            <div class="nav-item" onclick="showSection('llm')">🧠 LLM 解析</div>
+            <div class="nav-item" onclick="showSection('ros')">📡 ROS2 通信</div>
+        </div>
+
+        <div class="content">
+            <!-- 任务管理 -->
+            <div id="sec-task" class="section">
+                <div class="section-title">📋 任务管理 API <small style="font-weight:normal;color:#888;">/api/v1/tasks</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/tasks</span>
+                    </div>
+                    <div class="api-desc">创建任务（自动触发调度）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>commandType <span style="color:#cf1322">*</span></label>
+                            <input type="text" id="t_create_cmd" value="MOVE_TO" />
+                        </div>
+                        <div class="form-group">
+                            <label>priority</label>
+                            <input type="number" id="t_create_pri" value="1" min="1" max="5" />
+                        </div>
+                        <div class="form-group">
+                            <label>robotId（可选）</label>
+                            <input type="text" id="t_create_rid" placeholder="留空由调度器自动分配" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>estimatedDuration（秒）</label>
+                            <input type="number" id="t_create_est" value="120" />
+                        </div>
+                        <div class="form-group">
+                            <label>deadline（ISO格式，可选）</label>
+                            <input type="text" id="t_create_dl" placeholder="2026-04-27T10:00:00" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full">
+                            <label>params（JSON）</label>
+                            <textarea id="t_create_params">{"x": 20, "y": 8, "speed": 1.5}</textarea>
+                        </div>
+                    </div>
+                    <button class="btn-send" onclick="taskCreate()">发送请求</button>
+                    <div class="result-panel" id="res-task-create"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/tasks</span>
+                    </div>
+                    <div class="api-desc">获取任务列表（支持筛选）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>status（可选: QUEUED/RUNNING/SUCCESS/FAILED）</label>
+                            <input type="text" id="t_list_status" placeholder="全部" />
+                        </div>
+                        <div class="form-group">
+                            <label>robotId（可选）</label>
+                            <input type="text" id="t_list_rid" placeholder="" />
+                        </div>
+                        <button class="btn-send" onclick="taskList()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-task-list"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/tasks/{taskId}</span>
+                    </div>
+                    <div class="api-desc">获取任务详情</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>taskId</label>
+                            <input type="text" id="t_detail_id" placeholder="输入任务ID" />
+                        </div>
+                        <button class="btn-send" onclick="taskDetail()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-task-detail"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method patch">PATCH</span>
+                        <span class="api-path">/api/v1/tasks/{taskId}/status</span>
+                    </div>
+                    <div class="api-desc">更新任务状态（SUCCESS/FAILED 会自动写日志）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>taskId</label>
+                            <input type="text" id="t_up_id" placeholder="输入任务ID" />
+                        </div>
+                        <div class="form-group">
+                            <label>status <span style="color:#cf1322">*</span></label>
+                            <select id="t_up_status">
+                                <option value="RUNNING">RUNNING</option>
+                                <option value="SUCCESS">SUCCESS</option>
+                                <option value="FAILED">FAILED</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>reason（失败时必填）</label>
+                            <input type="text" id="t_up_reason" placeholder="失败原因" />
+                        </div>
+                        <button class="btn-send" onclick="taskUpdateStatus()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-task-update"></div>
+                </div>
+            </div>
+
+            <!-- 机器人管理 -->
+            <div id="sec-robot" class="section hidden">
+                <div class="section-title">🤖 机器人管理 API <small style="font-weight:normal;color:#888;">/api</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/robots</span>
+                    </div>
+                    <div class="api-desc">获取机器人列表</div>
+                    <button class="btn-send" onclick="robotList()">发送请求</button>
+                    <div class="result-panel" id="res-robot-list"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/robots/pose</span>
+                    </div>
+                    <div class="api-desc">获取机器人实时位姿（由 rosbridge /amcl_pose 自动同步）</div>
+                    <button class="btn-send" onclick="robotPose()">发送请求</button>
+                    <div class="result-panel" id="res-robot-pose"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/robot/goal</span>
+                    </div>
+                    <div class="api-desc">设置机器人目标点（内存 + 简化直线路径）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>robotId</label>
+                            <input type="text" id="r_goal_id" placeholder="r001" />
+                        </div>
+                        <div class="form-group">
+                            <label>x</label>
+                            <input type="number" id="r_goal_x" value="5.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>y</label>
+                            <input type="number" id="r_goal_y" value="10.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>yaw（弧度，可选）</label>
+                            <input type="number" id="r_goal_yaw" value="1.57" step="0.01" />
+                        </div>
+                        <button class="btn-send" onclick="robotGoal()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-robot-goal"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/robots/pose</span>
+                    </div>
+                    <div class="api-desc">更新机器人实时位姿（前端上报坐标到后端）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>robotId</label>
+                            <input type="text" id="r_pose_id" placeholder="r001" />
+                        </div>
+                        <div class="form-group">
+                            <label>x</label>
+                            <input type="number" id="r_pose_x" value="5.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>y</label>
+                            <input type="number" id="r_pose_y" value="10.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>yaw（弧度，可选）</label>
+                            <input type="number" id="r_pose_yaw" value="1.57" step="0.01" />
+                        </div>
+                        <button class="btn-send" onclick="robotUpdatePose()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-robot-update-pose"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/robot/path?robotId=xxx</span>
+                    </div>
+                    <div class="api-desc">获取规划路径（简化直线插值）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>robotId</label>
+                            <input type="text" id="r_path_id" placeholder="r001" />
+                        </div>
+                        <button class="btn-send" onclick="robotPath()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-robot-path"></div>
+                </div>
+            </div>
+
+            <!-- 日志查询 -->
+            <div id="sec-log" class="section hidden">
+                <div class="section-title">📜 日志查询 API <small style="font-weight:normal;color:#888;">/api/v1/logs</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/logs</span>
+                    </div>
+                    <div class="api-desc">获取日志列表（支持 type / referenceId 筛选）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>type（可选: TASK/ROBOT/SYSTEM）</label>
+                            <select id="l_type">
+                                <option value="">全部</option>
+                                <option value="TASK">TASK</option>
+                                <option value="ROBOT">ROBOT</option>
+                                <option value="SYSTEM">SYSTEM</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>referenceId（可选）</label>
+                            <input type="text" id="l_ref" placeholder="任务ID或机器人ID" />
+                        </div>
+                        <button class="btn-send" onclick="logList()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-log-list"></div>
+                </div>
+            </div>
+
+            <!-- SLAM 地图 -->
+            <div id="sec-slam" class="section hidden">
+                <div class="section-title">🗺️ SLAM 地图与路径规划 API <small style="font-weight:normal;color:#888;">/api/v1/scheduler/slam</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/scheduler/slam/map</span>
+                    </div>
+                    <div class="api-desc">获取当前激活地图数据（OccupancyGrid 格式 + 障碍物）</div>
+                    <button class="btn-send" onclick="slamMap()">发送请求</button>
+                    <div class="result-panel" id="res-slam-map"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/scheduler/slam/maps</span>
+                    </div>
+                    <div class="api-desc">获取地图列表（元数据，不含二进制）</div>
+                    <button class="btn-send" onclick="slamMapList()">发送请求</button>
+                    <div class="result-panel" id="res-slam-maps"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/slam/maps/{mapId}/switch</span>
+                    </div>
+                    <div class="api-desc">切换激活地图</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>mapId</label>
+                            <input type="text" id="s_switch_id" placeholder="地图ID" />
+                        </div>
+                        <button class="btn-send" onclick="slamSwitchMap()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-slam-switch"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/slam/map/reset</span>
+                    </div>
+                    <div class="api-desc">重置地图（从数据库重新加载原始数据，清空障碍物）</div>
+                    <button class="btn-send" onclick="slamResetMap()">发送请求</button>
+                    <div class="result-panel" id="res-slam-reset"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/scheduler/slam/obstacles</span>
+                    </div>
+                    <div class="api-desc">获取障碍物列表</div>
+                    <button class="btn-send" onclick="slamObstacles()">发送请求</button>
+                    <div class="result-panel" id="res-slam-obs"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/slam/obstacles</span>
+                    </div>
+                    <div class="api-desc">添加障碍物 / 空气墙</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>type</label>
+                            <select id="s_obs_type">
+                                <option value="obstacle">obstacle（实体障碍）</option>
+                                <option value="invisible">invisible（空气墙）</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>shape</label>
+                            <select id="s_obs_shape">
+                                <option value="rectangle">rectangle</option>
+                                <option value="circle">circle</option>
+                                <option value="polygon">polygon</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>x</label>
+                            <input type="number" id="s_obs_x" value="5.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>y</label>
+                            <input type="number" id="s_obs_y" value="3.0" step="0.1" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>width（矩形）</label>
+                            <input type="number" id="s_obs_w" value="2.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>height（矩形）</label>
+                            <input type="number" id="s_obs_h" value="1.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>radius（圆形）</label>
+                            <input type="number" id="s_obs_r" value="1.5" step="0.1" />
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group full">
+                            <label>points（多边形 JSON，可选）</label>
+                            <textarea id="s_obs_pts" placeholder="[{\"x\":0,\"y\":0},{\"x\":1,\"y\":0},{\"x\":0.5,\"y\":1}]"></textarea>
+                        </div>
+                    </div>
+                    <button class="btn-send" onclick="slamAddObstacle()">发送请求</button>
+                    <div class="result-panel" id="res-slam-addobs"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/slam/path/plan</span>
+                    </div>
+                    <div class="api-desc">A* 路径规划（基于当前栅格地图 + 障碍物）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>startX</label>
+                            <input type="number" id="s_plan_sx" value="0.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>startY</label>
+                            <input type="number" id="s_plan_sy" value="0.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>goalX</label>
+                            <input type="number" id="s_plan_gx" value="10.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>goalY</label>
+                            <input type="number" id="s_plan_gy" value="8.0" step="0.1" />
+                        </div>
+                        <button class="btn-send" onclick="slamPlanPath()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-slam-plan"></div>
+                </div>
+            </div>
+
+            <!-- LLM -->
+            <div id="sec-llm" class="section hidden">
+                <div class="section-title">🧠 LLM 自然语言解析 API <small style="font-weight:normal;color:#888;">/api/v1/scheduler/llm</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/llm/parse</span>
+                    </div>
+                    <div class="api-desc">解析自然语言指令，自动拆分为子任务并存入数据库</div>
+                    <div class="form-row">
+                        <div class="form-group full">
+                            <label>instruction <span style="color:#cf1322">*</span></label>
+                            <input type="text" id="llm_inst" value="让机器人A去会议室拿杯子" />
+                        </div>
+                        <button class="btn-send" onclick="llmParse()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-llm-parse"></div>
+                </div>
+            </div>
+
+            <!-- ROS2 -->
+            <div id="sec-ros" class="section hidden">
+                <div class="section-title">📡 ROS2 通信 API <small style="font-weight:normal;color:#888;">/api/v1/scheduler/ros</small></div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method get">GET</span>
+                        <span class="api-path">/api/v1/scheduler/ros/status</span>
+                    </div>
+                    <div class="api-desc">查询 rosbridge 连接状态与消息计数</div>
+                    <button class="btn-send" onclick="rosStatus()">发送请求</button>
+                    <div class="result-panel" id="res-ros-status"></div>
+                </div>
+
+                <div class="api-card">
+                    <div class="api-header">
+                        <span class="method post">POST</span>
+                        <span class="api-path">/api/v1/scheduler/ros/goal</span>
+                    </div>
+                    <div class="api-desc">发送导航目标到 ROS2（发布 /goal_pose）</div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>robotCode（可选，空则使用 default-robot-code）</label>
+                            <input type="text" id="ros_goal_code" placeholder="tb3_0" />
+                        </div>
+                        <div class="form-group">
+                            <label>x</label>
+                            <input type="number" id="ros_goal_x" value="5.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>y</label>
+                            <input type="number" id="ros_goal_y" value="3.0" step="0.1" />
+                        </div>
+                        <div class="form-group">
+                            <label>yaw</label>
+                            <input type="number" id="ros_goal_yaw" value="0.0" step="0.1" />
+                        </div>
+                        <button class="btn-send" onclick="rosGoal()">发送请求</button>
+                    </div>
+                    <div class="result-panel" id="res-ros-goal"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ===== 通用工具 =====
+        function getBase() {
+            return document.getElementById('baseUrl').value.replace(/\/$/, '');
+        }
+        function setResult(id, obj) {
+            const el = document.getElementById(id);
+            if (obj instanceof Error) {
+                el.textContent = '❌ Error: ' + obj.message;
+            } else if (typeof obj === 'string') {
+                el.textContent = obj;
+            } else {
+                el.textContent = JSON.stringify(obj, null, 2);
+            }
+        }
+        async function req(path, opts = {}) {
+            const url = getBase() + path;
+            const start = performance.now();
+            try {
+                const res = await fetch(url, {
+                    headers: { 'Content-Type': 'application/json', ...opts.headers },
+                    ...opts
+                });
+                const text = await res.text();
+                const data = text ? JSON.parse(text) : {};
+                const cost = (performance.now() - start).toFixed(1);
+                return { ok: res.ok, status: res.status, cost, data };
+            } catch (e) {
+                throw new Error('请求失败: ' + e.message + ' （请检查后端是否已启动 / CORS 是否放行）');
+            }
+        }
+
+        // ===== 健康检查 =====
+        async function checkHealth() {
+            const st = document.getElementById('healthStatus');
+            st.textContent = '检测中...';
+            try {
+                const r = await req('/api/robots', { method: 'GET' });
+                st.innerHTML = `<span style="color:#389e0d;font-weight:600;">✅ 后端正常 (${r.status}, ${r.cost}ms)</span>`;
+            } catch (e) {
+                st.innerHTML = `<span style="color:#cf1322;font-weight:600;">❌ ${e.message}</span>`;
+            }
+        }
+
+        // ===== 导航切换 =====
+        function showSection(name) {
+            document.querySelectorAll('.section').forEach(s => s.classList.add('hidden'));
+            document.getElementById('sec-' + name).classList.remove('hidden');
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        // ===== 任务管理 =====
+        async function taskCreate() {
+            const body = {
+                commandType: document.getElementById('t_create_cmd').value,
+                priority: parseInt(document.getElementById('t_create_pri').value) || 3,
+                robotId: document.getElementById('t_create_rid').value || undefined,
+                estimatedDuration: parseInt(document.getElementById('t_create_est').value) || 0,
+                deadline: document.getElementById('t_create_dl').value || undefined,
+                params: JSON.parse(document.getElementById('t_create_params').value || '{}')
+            };
+            try {
+                const r = await req('/api/v1/tasks', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-task-create', r.data);
+            } catch (e) { setResult('res-task-create', e); }
+        }
+        async function taskList() {
+            const qs = new URLSearchParams();
+            const s = document.getElementById('t_list_status').value;
+            const rid = document.getElementById('t_list_rid').value;
+            if (s) qs.set('status', s);
+            if (rid) qs.set('robotId', rid);
+            try {
+                const r = await req('/api/v1/tasks?' + qs.toString(), { method: 'GET' });
+                setResult('res-task-list', r.data);
+            } catch (e) { setResult('res-task-list', e); }
+        }
+        async function taskDetail() {
+            const id = document.getElementById('t_detail_id').value;
+            if (!id) return setResult('res-task-detail', '请输入 taskId');
+            try {
+                const r = await req('/api/v1/tasks/' + id, { method: 'GET' });
+                setResult('res-task-detail', r.data);
+            } catch (e) { setResult('res-task-detail', e); }
+        }
+        async function taskUpdateStatus() {
+            const id = document.getElementById('t_up_id').value;
+            if (!id) return setResult('res-task-update', '请输入 taskId');
+            const body = {
+                status: document.getElementById('t_up_status').value,
+                reason: document.getElementById('t_up_reason').value || undefined
+            };
+            try {
+                const r = await req('/api/v1/tasks/' + id + '/status', { method: 'PATCH', body: JSON.stringify(body) });
+                setResult('res-task-update', r.data);
+            } catch (e) { setResult('res-task-update', e); }
+        }
+
+        // ===== 机器人管理 =====
+        async function robotList() {
+            try {
+                const r = await req('/api/robots', { method: 'GET' });
+                setResult('res-robot-list', r.data);
+            } catch (e) { setResult('res-robot-list', e); }
+        }
+        async function robotPose() {
+            try {
+                const r = await req('/api/robots/pose', { method: 'GET' });
+                setResult('res-robot-pose', r.data);
+            } catch (e) { setResult('res-robot-pose', e); }
+        }
+        async function robotGoal() {
+            const body = {
+                robotId: document.getElementById('r_goal_id').value,
+                x: parseFloat(document.getElementById('r_goal_x').value),
+                y: parseFloat(document.getElementById('r_goal_y').value),
+                yaw: parseFloat(document.getElementById('r_goal_yaw').value) || 0
+            };
+            try {
+                const r = await req('/api/robot/goal', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-robot-goal', r.data);
+            } catch (e) { setResult('res-robot-goal', e); }
+        }
+        async function robotUpdatePose() {
+            const body = {
+                robotId: document.getElementById('r_pose_id').value,
+                x: parseFloat(document.getElementById('r_pose_x').value),
+                y: parseFloat(document.getElementById('r_pose_y').value),
+                yaw: parseFloat(document.getElementById('r_pose_yaw').value) || 0
+            };
+            if (!body.robotId) return setResult('res-robot-update-pose', '请输入 robotId');
+            try {
+                const r = await req('/api/robots/pose', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-robot-update-pose', r.data);
+            } catch (e) { setResult('res-robot-update-pose', e); }
+        }
+        async function robotPath() {
+            const id = document.getElementById('r_path_id').value;
+            if (!id) return setResult('res-robot-path', '请输入 robotId');
+            try {
+                const r = await req('/api/robot/path?robotId=' + encodeURIComponent(id), { method: 'GET' });
+                setResult('res-robot-path', r.data);
+            } catch (e) { setResult('res-robot-path', e); }
+        }
+
+        // ===== 日志 =====
+        async function logList() {
+            const qs = new URLSearchParams();
+            const t = document.getElementById('l_type').value;
+            const ref = document.getElementById('l_ref').value;
+            if (t) qs.set('type', t);
+            if (ref) qs.set('referenceId', ref);
+            try {
+                const r = await req('/api/v1/logs?' + qs.toString(), { method: 'GET' });
+                setResult('res-log-list', r.data);
+            } catch (e) { setResult('res-log-list', e); }
+        }
+
+        // ===== SLAM =====
+        async function slamMap() {
+            try {
+                const r = await req('/api/v1/scheduler/slam/map', { method: 'GET' });
+                setResult('res-slam-map', r.data);
+            } catch (e) { setResult('res-slam-map', e); }
+        }
+        async function slamMapList() {
+            try {
+                const r = await req('/api/v1/scheduler/slam/maps', { method: 'GET' });
+                setResult('res-slam-maps', r.data);
+            } catch (e) { setResult('res-slam-maps', e); }
+        }
+        async function slamSwitchMap() {
+            const id = document.getElementById('s_switch_id').value;
+            if (!id) return setResult('res-slam-switch', '请输入 mapId');
+            try {
+                const r = await req('/api/v1/scheduler/slam/maps/' + id + '/switch', { method: 'POST' });
+                setResult('res-slam-switch', r.data);
+            } catch (e) { setResult('res-slam-switch', e); }
+        }
+        async function slamResetMap() {
+            try {
+                const r = await req('/api/v1/scheduler/slam/map/reset', { method: 'POST' });
+                setResult('res-slam-reset', r.data);
+            } catch (e) { setResult('res-slam-reset', e); }
+        }
+        async function slamObstacles() {
+            try {
+                const r = await req('/api/v1/scheduler/slam/obstacles', { method: 'GET' });
+                setResult('res-slam-obs', r.data);
+            } catch (e) { setResult('res-slam-obs', e); }
+        }
+        async function slamAddObstacle() {
+            const body = {
+                type: document.getElementById('s_obs_type').value,
+                shape: document.getElementById('s_obs_shape').value,
+                x: parseFloat(document.getElementById('s_obs_x').value),
+                y: parseFloat(document.getElementById('s_obs_y').value),
+                width: parseFloat(document.getElementById('s_obs_w').value) || undefined,
+                height: parseFloat(document.getElementById('s_obs_h').value) || undefined,
+                radius: parseFloat(document.getElementById('s_obs_r').value) || undefined
+            };
+            const pts = document.getElementById('s_obs_pts').value;
+            if (pts) body.points = JSON.parse(pts);
+            try {
+                const r = await req('/api/v1/scheduler/slam/obstacles', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-slam-addobs', r.data);
+            } catch (e) { setResult('res-slam-addobs', e); }
+        }
+        async function slamPlanPath() {
+            const body = {
+                startX: parseFloat(document.getElementById('s_plan_sx').value),
+                startY: parseFloat(document.getElementById('s_plan_sy').value),
+                goalX: parseFloat(document.getElementById('s_plan_gx').value),
+                goalY: parseFloat(document.getElementById('s_plan_gy').value)
+            };
+            try {
+                const r = await req('/api/v1/scheduler/slam/path/plan', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-slam-plan', r.data);
+            } catch (e) { setResult('res-slam-plan', e); }
+        }
+
+        // ===== LLM =====
+        async function llmParse() {
+            const body = { instruction: document.getElementById('llm_inst').value };
+            try {
+                const r = await req('/api/v1/scheduler/llm/parse', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-llm-parse', r.data);
+            } catch (e) { setResult('res-llm-parse', e); }
+        }
+
+        // ===== ROS2 =====
+        async function rosStatus() {
+            try {
+                const r = await req('/api/v1/scheduler/ros/status', { method: 'GET' });
+                setResult('res-ros-status', r.data);
+            } catch (e) { setResult('res-ros-status', e); }
+        }
+        async function rosGoal() {
+            const body = {
+                robotCode: document.getElementById('ros_goal_code').value || '',
+                x: parseFloat(document.getElementById('ros_goal_x').value),
+                y: parseFloat(document.getElementById('ros_goal_y').value),
+                yaw: parseFloat(document.getElementById('ros_goal_yaw').value) || 0
+            };
+            try {
+                const r = await req('/api/v1/scheduler/ros/goal', { method: 'POST', body: JSON.stringify(body) });
+                setResult('res-ros-goal', r.data);
+            } catch (e) { setResult('res-ros-goal', e); }
+        }
+
+        // 页面加载后自动检测一次
+        window.addEventListener('load', checkHealth);
+    </script>
+</body>
+</html>

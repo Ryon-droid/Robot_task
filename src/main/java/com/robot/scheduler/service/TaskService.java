@@ -1,5 +1,6 @@
 package com.robot.scheduler.service;
 
+import com.robot.scheduler.dto.TaskRankingDTO;
 import com.robot.scheduler.entity.Task;
 
 import java.util.List;
@@ -55,4 +56,9 @@ public interface TaskService {
      * 调整任务优先级
      */
     boolean updateTaskPriority(String taskId, Integer priority);
+
+    /**
+     * 获取任务排行列表（前端专用精简字段）
+     */
+    List<TaskRankingDTO> getTaskRankingList();
 }

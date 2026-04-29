@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.robot.scheduler.common.Result;
 import com.robot.scheduler.common.StatusConstant;
+import com.robot.scheduler.dto.TaskRankingDTO;
 import com.robot.scheduler.entity.Task;
 import com.robot.scheduler.service.TaskService;
 import com.robot.scheduler.service.ScheduleService;
@@ -39,6 +40,8 @@ public class NewTaskController {
         String commandType = (String) request.get("commandType");
         Integer priority = (Integer) request.get("priority");
         Map<String, Object> params = (Map<String, Object>) request.get("params");
+        Integer estimatedDuration = (Integer) request.get("estimatedDuration");
+        Object deadlineObj = request.get("deadline");
 
         // 构建任务
         Task task = new Task();
@@ -48,6 +51,18 @@ public class NewTaskController {
         task.setStatus(StatusConstant.TASK_STATUS_PENDING);
         task.setTaskParams(serializeParams(params));
         task.setTaskName(commandType + "任务");
+        task.setEstimatedDuration(estimatedDuration);
+
+        // 解析 deadline（前端可能传时间戳或 ISO 字符串）
+        if (deadlineObj instanceof Number) {
+            task.setDeadline(new Date(((Number) deadlineObj).longValue()));
+        } else if (deadlineObj instanceof String) {
+            try {
+                task.setDeadline(Date.from(Instant.parse((String) deadlineObj)));
+            } catch (Exception e) {
+                task.setDeadline(null);
+            }
+        }
 
         // 保存任务
         Task createdTask = taskService.createTask(task);
@@ -56,6 +71,15 @@ public class NewTaskController {
         scheduleService.triggerSchedule();
 
         return Result.success(buildTaskResponse(createdTask));
+    }
+
+    /**
+     * 获取任务排行（精简字段，前端专用）
+     * GET /api/v1/tasks/ranking
+     */
+    @GetMapping("/ranking")
+    public Result<List<TaskRankingDTO>> getTaskRanking() {
+        return Result.success(taskService.getTaskRankingList());
     }
 
     /**
@@ -126,6 +150,8 @@ public class NewTaskController {
         map.put("status", task.getStatus());
         map.put("createdAt", task.getCreateTime() != null ? task.getCreateTime().getTime() : null);
         map.put("params", parseParams(task.getTaskParams()));
+        map.put("estimatedDuration", task.getEstimatedDuration());
+        map.put("deadline", task.getDeadline() != null ? task.getDeadline().getTime() : null);
         return map;
     }
 

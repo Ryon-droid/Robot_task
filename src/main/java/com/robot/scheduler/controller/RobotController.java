@@ -92,6 +92,38 @@ public class RobotController {
     }
 
     /**
+     * 更新机器人实时位姿（前端上报坐标）
+     * POST /api/robots/pose
+     * body: { robotId, x, y, yaw }
+     */
+    @PostMapping("/robots/pose")
+    public Result<Map<String, Object>> updateRobotPose(@RequestBody Map<String, Object> poseData) {
+        String robotId = (String) poseData.get("robotId");
+        Double x = poseData.get("x") != null ? ((Number) poseData.get("x")).doubleValue() : null;
+        Double y = poseData.get("y") != null ? ((Number) poseData.get("y")).doubleValue() : null;
+        Double yaw = poseData.get("yaw") != null ? ((Number) poseData.get("yaw")).doubleValue() : 0.0;
+
+        if (robotId == null || x == null || y == null) {
+            return Result.error("robotId、x、y 为必填参数");
+        }
+
+        Robot robot = robotService.getRobotById(robotId);
+        if (robot == null) {
+            return Result.error("机器人不存在: " + robotId);
+        }
+
+        robotService.updateRobotPose(robotId, x, y, yaw);
+
+        Map<String, Object> result = new HashMap<>();
+        result.put("robotId", robotId);
+        result.put("x", x);
+        result.put("y", y);
+        result.put("yaw", yaw);
+        result.put("message", "位姿更新成功");
+        return Result.success(result);
+    }
+
+    /**
      * 获取规划路径
      * GET /api/robot/path?robotId=xxx
      * 返回 path 数组

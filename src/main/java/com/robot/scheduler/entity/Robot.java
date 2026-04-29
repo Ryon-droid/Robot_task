@@ -1,6 +1,7 @@
 package com.robot.scheduler.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Data;
@@ -15,6 +16,7 @@ public class Robot {
     private String robotName;
     private String robotCode;
     private String status;
+    @TableField("`load`")
     private Integer load;
     private Date lastHeartbeat;
     private Integer battery;  // 电池电量（百分比）

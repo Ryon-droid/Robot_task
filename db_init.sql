@@ -14,7 +14,7 @@ USE robot_scheduler;
 DROP TABLE IF EXISTS robot;
 CREATE TABLE robot
 (
-    robot_id        VARCHAR(32)     NOT NULL COMMENT '机器人ID（程序生成UUID）',
+    robot_id        VARCHAR(36)     NOT NULL COMMENT '机器人ID（程序生成UUID）',
     robot_name      VARCHAR(64)     NULL COMMENT '机器人名称',
     robot_code      VARCHAR(64)     NULL COMMENT '机器人编码',
     status          VARCHAR(16)     NOT NULL DEFAULT '空闲' COMMENT '状态：空闲 / 忙碌 / 故障',
@@ -35,7 +35,7 @@ CREATE TABLE robot
 DROP TABLE IF EXISTS task;
 CREATE TABLE task
 (
-    task_id                 VARCHAR(32)     NOT NULL COMMENT '任务ID（程序生成UUID）',
+    task_id                 VARCHAR(36)     NOT NULL COMMENT '任务ID（程序生成UUID）',
     task_name               VARCHAR(128)    NULL COMMENT '任务名称',
     command_type            VARCHAR(64)     NULL COMMENT '指令类型',
     priority                INT             NOT NULL DEFAULT 3 COMMENT '优先级 1-5，1最高',
@@ -64,7 +64,7 @@ CREATE TABLE task
 DROP TABLE IF EXISTS task_record;
 CREATE TABLE task_record
 (
-    record_id       VARCHAR(32)     NOT NULL COMMENT '记录ID（程序生成UUID）',
+    record_id       VARCHAR(36)     NOT NULL COMMENT '记录ID（程序生成UUID）',
     task_id         VARCHAR(32)     NOT NULL COMMENT '关联任务ID',
     old_status      VARCHAR(16)     NULL COMMENT '变更前状态',
     new_status      VARCHAR(16)     NULL COMMENT '变更后状态',
@@ -85,7 +85,7 @@ CREATE TABLE log
     log_id          BIGINT          NOT NULL AUTO_INCREMENT COMMENT '日志ID（自增）',
     log_type        VARCHAR(32)     NULL COMMENT '日志类型：TASK / ROBOT / SYSTEM',
     message         TEXT            NULL COMMENT '日志内容',
-    reference_id    VARCHAR(32)     NULL COMMENT '关联ID（任务ID或机器人ID）',
+    reference_id    VARCHAR(36)     NULL COMMENT '关联ID（任务ID或机器人ID）',
     create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (log_id),
     INDEX idx_log_type (log_type),
@@ -101,7 +101,7 @@ CREATE TABLE log
 DROP TABLE IF EXISTS map;
 CREATE TABLE map
 (
-    map_id          VARCHAR(32)     NOT NULL COMMENT '地图ID（程序生成UUID）',
+    map_id          VARCHAR(36)     NOT NULL COMMENT '地图ID（程序生成UUID）',
     map_name        VARCHAR(100)    NOT NULL COMMENT '地图名称',
     pgm_data        LONGBLOB        NULL COMMENT 'PGM 栅格图二进制数据',
     yaml_data       TEXT            NULL COMMENT 'YAML 元数据文本',
@@ -129,7 +129,7 @@ CREATE TABLE map
 DROP TABLE IF EXISTS map_live;
 CREATE TABLE map_live
 (
-    live_id         VARCHAR(32)     NOT NULL COMMENT '实时地图ID（固定为 current）',
+    live_id         VARCHAR(36)     NOT NULL COMMENT '实时地图ID（固定为 current）',
     map_id          VARCHAR(32)     NULL COMMENT '关联的静态地图ID',
     resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
     width           INT             NULL COMMENT '地图宽度（像素）',

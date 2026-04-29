@@ -1,0 +1,50 @@
+server:
+  address: 0.0.0.0
+  port: 8080
+
+spring:
+  datasource:
+    url: "jdbc:h2:mem:robot_scheduler;MODE=MySQL;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;INIT=RUNSCRIPT FROM 'classpath:schema-local.sql'\\;RUNSCRIPT FROM 'classpath:data-local.sql'"
+    username: sa
+    password: 
+    driver-class-name: org.h2.Driver
+  sql:
+    init:
+      mode: never
+
+mybatis-plus:
+  mapper-locations: classpath:mapper/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+
+scheduler:
+  priority:
+    weight:
+      base: 1.0
+      waiting: 1.0
+      deadline: 1.0
+      type: 1.0
+      robot: 1.0
+    recalculation-interval-ms: 999999999
+
+llm:
+  websocket:
+    url: ws://localhost:8090/ws/llm
+    timeout-ms: 5000
+
+rosbridge:
+  websocket:
+    url: ws://localhost:9090
+  topics:
+    map: /map
+    pose: /amcl_pose
+    goal: /goal_pose
+  default-robot-code: ""
+
+data-service:
+  url: http://localhost:8000
+  connect-timeout-ms: 3000
+  read-timeout-ms: 5000
+  retry:
+    max-attempts: 3
+    backoff-multiplier: 1000

@@ -19,7 +19,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 public class LLMWebSocketRawConnectionTest {
 
-    private static final String LLM_WEBSOCKET_URL = "ws://172.16.25.152:8000";
+    private static final String LLM_WEBSOCKET_URL = "ws://172.16.25.192:8090/ws/llm";
     private static final long TIMEOUT_SECONDS = 5;
 
     @Test

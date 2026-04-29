@@ -5,7 +5,7 @@
 Robot Scheduler 是一个基于 Spring Boot 的机器人任务调度系统，实现多机器人之间的任务智能分配、状态跟踪、SLAM 地图管理与 ROS2 通信对接。
 
 ### 核心功能
-- **任务管理**：创建、查询、状态更新，支持动态优先级调度
+- **任务管理**：创建、查询、状态更新，支持动态优先级调度；支持取消、重分配、手动调整优先级
 - **机器人管理**：列表查询、实时位姿获取、目标点设置、紧急停止
 - **智能调度**：优先级队列 + 乐观锁分配，支持多维度动态优先级重算
 - **数据服务对接**：与外部数据服务（S-17）双向 HTTP 通信，关键事件异步上报，暴露 `/scheduler/...` 外部查询/控制接口
@@ -50,6 +50,8 @@ robot-scheduler/
 │   │   ├── SLAMController.java            # SLAM 地图与路径规划 API
 │   │   ├── LLMController.java             # LLM 自然语言解析 API
 │   │   └── RosBridgeController.java       # ROS2 通信状态与导航目标 API
+│   ├── dto/
+│   │   └── TaskRankingDTO.java            # 任务排行 DTO
 │   ├── entity/                            # 实体类
 │   │   ├── Task.java                      # 任务实体
 │   │   ├── Robot.java                     # 机器人实体
@@ -99,18 +101,18 @@ robot-scheduler/
 ### 3.1 任务表 (task)
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| task_id | VARCHAR(32) | 主键，UUID |
-| task_name | VARCHAR(64) | 任务名称 |
-| command_type | VARCHAR(32) | 命令类型 |
+| task_id | VARCHAR(36) | 主键，UUID（代码生成 32 位无横线） |
+| task_name | VARCHAR(128) | 任务名称 |
+| command_type | VARCHAR(64) | 命令类型 |
 | priority | INT | 优先级 (1-5，1最高) |
-| robot_id | VARCHAR(32) | 执行机器人ID |
-| robot_code | VARCHAR(32) | 机器人编码 |
+| robot_id | VARCHAR(36) | 执行机器人ID |
+| robot_code | VARCHAR(64) | 机器人编码 |
 | status | VARCHAR(16) | 状态：QUEUED → RUNNING → SUCCESS / FAILED |
 | task_params | JSON | 任务参数 |
 | create_time | DATETIME | 创建时间 |
-| start_time | DATETIME | 开始时间 |
+| start_time | DATETIME | 开始执行时间 |
 | finish_time | DATETIME | 完成/失败时间 |
-| fail_reason | VARCHAR(255) | 失败原因 |
+| fail_reason | VARCHAR(512) | 失败原因 |
 | deadline | DATETIME | 任务截止时间 |
 | estimated_duration | INT | 预估执行时长（秒） |
 | dynamic_priority_score | DOUBLE | 动态优先级分数（越低越优先） |
@@ -118,9 +120,9 @@ robot-scheduler/
 ### 3.2 机器人表 (robot)
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| robot_id | VARCHAR(32) | 主键，UUID |
+| robot_id | VARCHAR(36) | 主键，UUID |
 | robot_name | VARCHAR(64) | 机器人名称 |
-| robot_code | VARCHAR(32) | 机器人编码（与 ROS/LLM 对接） |
+| robot_code | VARCHAR(64) | 机器人编码（与 ROS/LLM 对接） |
 | status | VARCHAR(16) | 状态：空闲/忙碌/故障 |
 | load | INT | 当前负载（任务数） |
 | battery | INT | 电量百分比 |
@@ -132,12 +134,12 @@ robot-scheduler/
 ### 3.3 任务状态记录表 (task_record)
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| record_id | VARCHAR(32) | 主键，UUID |
-| task_id | VARCHAR(32) | 关联任务ID |
+| record_id | VARCHAR(36) | 主键，UUID |
+| task_id | VARCHAR(36) | 关联任务ID |
 | old_status | VARCHAR(16) | 变更前状态 |
 | new_status | VARCHAR(16) | 变更后状态 |
 | change_time | DATETIME | 变更时间 |
-| change_reason | VARCHAR(255) | 变更原因 |
+| change_reason | VARCHAR(512) | 变更原因 |
 
 ### 3.4 日志表 (log)
 | 字段 | 类型 | 说明 |
@@ -145,13 +147,13 @@ robot-scheduler/
 | log_id | BIGINT | 主键，自增 |
 | log_type | VARCHAR(32) | 类型：TASK / ROBOT / SYSTEM |
 | message | TEXT | 日志内容 |
-| reference_id | VARCHAR(32) | 关联ID |
+| reference_id | VARCHAR(36) | 关联ID |
 | create_time | DATETIME | 创建时间 |
 
 ### 3.5 地图表 (map)
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| map_id | VARCHAR(32) | 主键，UUID |
+| map_id | VARCHAR(36) | 主键，UUID |
 | map_name | VARCHAR(100) | 地图名称 |
 | pgm_data | LONGBLOB | PGM 栅格图二进制 |
 | yaml_data | TEXT | YAML 元数据文本 |
@@ -171,8 +173,8 @@ robot-scheduler/
 ### 3.6 实时地图快照表 (map_live)
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| live_id | VARCHAR(32) | 主键，固定为 `current` |
-| map_id | VARCHAR(32) | 关联的静态地图 ID |
+| live_id | VARCHAR(36) | 主键，固定为 `current` |
+| map_id | VARCHAR(36) | 关联的静态地图 ID |
 | resolution | DOUBLE | 分辨率（米/像素） |
 | width | INT | 地图宽度（像素） |
 | height | INT | 地图高度（像素） |
@@ -190,38 +192,50 @@ robot-scheduler/
 ### 4.1 任务服务 (TaskServiceImpl)
 - 任务创建（自动生成 UUID、计算动态优先级分数）
 - 任务状态更新（RUNNING/SUCCESS/FAILED 自动记录时间戳与日志）
-- 任务查询与筛选（支持按状态、机器人ID筛选）
+- 任务查询与筛选（支持按状态、机器人ID筛选；按 dynamic_priority_score 排序）
+- **取消任务**：QUEUED 任务直接删除；RUNNING 任务标记为 FAILED
+- **重新分配**：将 RUNNING 任务回退为 QUEUED，释放机器人并触发重新调度
+- **调整优先级**：修改 priority 后若任务在队列中则刷新队列顺序
+- **任务排行**：`TaskRankingDTO` 提供前端精简字段列表
 
 ### 4.2 机器人服务 (RobotServiceImpl)
 - 机器人列表查询
 - 目标点设置（内存存储 + 简化直线路径生成）
-- 位姿更新（写入数据库）
+- 位姿更新（写入数据库，异步上报数据服务）
+- 紧急停止
 
 ### 4.3 调度服务 (ScheduleServiceImpl)
-- **优先级队列**：`PriorityBlockingQueue`，启动时加载前 1000 条 `QUEUED` 任务
+- **优先级队列**：`PriorityBlockingQueue`，启动时加载前 1000 条 `QUEUED` 任务，按 `dynamic_priority_score` 排序
 - **动态优先级**：每 30 秒自动重算所有待执行任务分数（基于基础优先级、等待时间、截止时间、任务类型权重、机器人匹配度）
 - **乐观锁分配**：`UpdateWrapper` 条件更新防止并发冲突
+- **调度锁**：`ReentrantLock.tryLock()` 防止调度竞态
 - **故障回退**：机器人故障时，将其 `RUNNING` 任务回退为 `QUEUED` 并重新入队
 
-### 4.4 LLM 服务 (LLMServiceImpl)
+### 4.4 动态优先级服务 (TaskPriorityPlannerImpl)
+- 5 维评分：基础优先级、等待时间、截止时间、任务类型、最佳机器人匹配度
+- 可配置权重：`scheduler.priority.weight.*`
+- 自动定时重算间隔：`scheduler.priority.recalculation-interval-ms`（默认 30000ms）
+
+### 4.5 LLM 服务 (LLMServiceImpl)
 - WebSocket 连接外部 LLM 服务
 - 自然语言解析为结构化子任务列表
 - 每个子任务独立生成 `Task` 记录，`commandType` 为动作大写，`robotCode` 为设备编码
 
-### 4.5 SLAM 服务 (SLAMServiceImpl)
-- **标准地图格式支持**：解析 ROS `.pgm`（P5 二进制灰度图）与 `.yaml` 元数据，自动处理 `negate`、占用/空闲阈值，像素坐标系翻转成地图坐标系
+### 4.6 SLAM 服务 (SLAMServiceImpl)
+- **标准地图格式支持**：解析 ROS `.pgm`（P5 二进制灰度图）与 `.yaml` 元数据
 - **静态地图持久化**：pgm 存 MySQL `LONGBLOB`，yaml 存 `TEXT`，支持多地图记录与切换
-- **实时地图快照**：RosBridge 收到 `/map` 或用户增删改障碍物时，自动将当前内存栅格（含障碍物）写入 `map_live` 表；服务重启后自动恢复，避免丢图
+- **实时地图快照**：RosBridge 收到 `/map` 或用户增删改障碍物时，自动将当前内存栅格（含障碍物）写入 `map_live` 表；服务重启后自动恢复
 - **障碍物管理**：在原始地图之上叠加动态障碍物，支持矩形、圆形、多边形；区分实体障碍物与空气墙
-- **A* 路径规划**：8 方向搜索 + 欧式距离启发函数 + 路径简化，同时考虑原始地图障碍与动态障碍物
+- **A* 路径规划**：8 方向搜索 + 欧式距离启发函数 + 路径简化
 
-### 4.6 ROS2 通信服务 (RosBridgeServiceImpl)
+### 4.7 ROS2 通信服务 (RosBridgeServiceImpl)
 - WebSocket 客户端连接 `rosbridge_server`
 - 自动订阅 `/map` → 解析后更新内存栅格地图，并**自动持久化到 `map_live`**
 - 自动订阅 `/amcl_pose` → 解析位姿后更新对应机器人数据库记录
 - 支持通过 `/goal_pose` 向 ROS2 发送真实导航目标
+- 30 秒健康检查与 10 秒重连冷却
 
-### 4.7 日志服务 (LogServiceImpl)
+### 4.8 日志服务 (LogServiceImpl)
 - 任务完成/失败自动写入 `log` 表
 - 支持按类型、关联ID查询
 
@@ -261,6 +275,11 @@ Response:
         "params": { "x": 20, "y": 8 }
     }
 }
+```
+
+#### 获取任务排行（精简字段，前端专用）
+```
+GET /api/v1/tasks/ranking
 ```
 
 #### 获取任务列表
@@ -626,7 +645,7 @@ PRIORITY_LOWEST  = 5
 
 ## 七、配置说明
 
-### application.yml
+### application.yml（示例）
 ```yaml
 server:
   port: 8080
@@ -687,7 +706,7 @@ Scheduler 与数据服务（S-17）采用 **HTTP API 双向调用** 方案：
 
 | 方向 | 触发方 | 接口 | 说明 |
 |------|--------|------|------|
-| Scheduler → 数据服务 | 关键事件后异步上报 | `POST /api/v1/tasks` 等 | 任务创建、状态变更、日志、机器人状态/位置 |
+| Scheduler → 数据服务 | 关键事件后异步上报 | `POST /api/v1/tasks` 等 | 任务创建、状态变更、日志、机器人状态/位置/心跳 |
 | 数据服务 → Scheduler | 外部查询/控制 | `GET /scheduler/...` | 查询队列、机器人、任务；取消/重分配任务 |
 
 ### 上报事件清单
@@ -697,8 +716,9 @@ Scheduler 与数据服务（S-17）采用 **HTTP API 双向调用** 方案：
 | 创建任务 | `POST /api/v1/tasks` | `TaskServiceImpl.createTask()` |
 | 任务状态变更 | `POST /api/v1/tasks/{id}/status` | `TaskServiceImpl.updateTaskStatus()` |
 | 任务分配成功 | `PUT /api/v1/tasks/{id}` + 状态变更 | `ScheduleServiceImpl.tryAssignTask()` |
-| 机器人状态更新 | `POST /api/v1/robots/status` | `StateTrackServiceImpl.updateRobotState()` |
+| 机器人状态更新 | `POST /api/v1/robots/status` | `StateTrackServiceImpl.updateRobotState()` / `RobotServiceImpl.emergencyStop()` |
 | 机器人位置更新 | `POST /api/v1/navigation/positions` | `RobotServiceImpl.updateRobotPose()` |
+| 机器人心跳 | `POST /api/v1/robots/heartbeat` | `DataServiceClient.reportRobotHeartbeat()` |
 | 系统日志 | `POST /api/v1/logs/operation` 或 `/error` | `LogServiceImpl.createLog()` |
 
 > 所有上报均为**异步执行**（`@Async`），带 **3 次指数退避重试**，最终失败不阻塞调度主流程。
@@ -720,7 +740,7 @@ USE robot_scheduler;
 
 -- 机器人表
 CREATE TABLE robot (
-    robot_id        VARCHAR(32)     NOT NULL COMMENT '机器人ID（程序生成UUID）',
+    robot_id        VARCHAR(36)     NOT NULL COMMENT '机器人ID（程序生成UUID）',
     robot_name      VARCHAR(64)     NULL COMMENT '机器人名称',
     robot_code      VARCHAR(64)     NULL COMMENT '机器人编码',
     status          VARCHAR(16)     NOT NULL DEFAULT '空闲' COMMENT '状态：空闲 / 忙碌 / 故障',
@@ -735,11 +755,11 @@ CREATE TABLE robot (
 
 -- 任务表
 CREATE TABLE task (
-    task_id                 VARCHAR(32)     NOT NULL COMMENT '任务ID（程序生成UUID）',
+    task_id                 VARCHAR(36)     NOT NULL COMMENT '任务ID（程序生成UUID）',
     task_name               VARCHAR(128)    NULL COMMENT '任务名称',
     command_type            VARCHAR(64)     NULL COMMENT '指令类型',
     priority                INT             NOT NULL DEFAULT 3 COMMENT '优先级 1-5，1最高',
-    robot_id                VARCHAR(32)     NULL COMMENT '分配到的机器人ID',
+    robot_id                VARCHAR(36)     NULL COMMENT '分配到的机器人ID',
     robot_code              VARCHAR(64)     NULL COMMENT '机器人编码',
     status                  VARCHAR(16)     NOT NULL DEFAULT 'QUEUED' COMMENT '状态：QUEUED / RUNNING / SUCCESS / FAILED',
     task_params             JSON            NULL COMMENT '任务参数（JSON格式）',
@@ -758,8 +778,8 @@ CREATE TABLE task (
 
 -- 任务状态记录表
 CREATE TABLE task_record (
-    record_id       VARCHAR(32)     NOT NULL COMMENT '记录ID（程序生成UUID）',
-    task_id         VARCHAR(32)     NOT NULL COMMENT '关联任务ID',
+    record_id       VARCHAR(36)     NOT NULL COMMENT '记录ID（程序生成UUID）',
+    task_id         VARCHAR(36)     NOT NULL COMMENT '关联任务ID',
     old_status      VARCHAR(16)     NULL COMMENT '变更前状态',
     new_status      VARCHAR(16)     NULL COMMENT '变更后状态',
     change_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '变更时间',
@@ -773,7 +793,7 @@ CREATE TABLE log (
     log_id          BIGINT          NOT NULL AUTO_INCREMENT COMMENT '日志ID（自增）',
     log_type        VARCHAR(32)     NULL COMMENT '日志类型：TASK / ROBOT / SYSTEM',
     message         TEXT            NULL COMMENT '日志内容',
-    reference_id    VARCHAR(32)     NULL COMMENT '关联ID（任务ID或机器人ID）',
+    reference_id    VARCHAR(36)     NULL COMMENT '关联ID（任务ID或机器人ID）',
     create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
     PRIMARY KEY (log_id),
     INDEX idx_log_type (log_type),
@@ -783,7 +803,7 @@ CREATE TABLE log (
 
 -- 地图表
 CREATE TABLE map (
-    map_id          VARCHAR(32)     NOT NULL COMMENT '地图ID（程序生成UUID）',
+    map_id          VARCHAR(36)     NOT NULL COMMENT '地图ID（程序生成UUID）',
     map_name        VARCHAR(100)    NOT NULL COMMENT '地图名称',
     pgm_data        LONGBLOB        NULL COMMENT 'PGM 栅格图二进制数据',
     yaml_data       TEXT            NULL COMMENT 'YAML 元数据文本',
@@ -805,8 +825,8 @@ CREATE TABLE map (
 
 -- 实时地图快照表
 CREATE TABLE map_live (
-    live_id         VARCHAR(32)     NOT NULL COMMENT '实时地图ID（固定为 current）',
-    map_id          VARCHAR(32)     NULL COMMENT '关联的静态地图ID',
+    live_id         VARCHAR(36)     NOT NULL COMMENT '实时地图ID（固定为 current）',
+    map_id          VARCHAR(36)     NULL COMMENT '关联的静态地图ID',
     resolution      DOUBLE          NULL COMMENT '分辨率（米/像素）',
     width           INT             NULL COMMENT '地图宽度（像素）',
     height          INT             NULL COMMENT '地图高度（像素）',
@@ -847,5 +867,5 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 ---
 
-> **文档版本：** v3.2.0  
-> **更新日期：** 2026-04-27
+> **文档版本：** v3.3.0  
+> **更新日期：** 2026-04-29

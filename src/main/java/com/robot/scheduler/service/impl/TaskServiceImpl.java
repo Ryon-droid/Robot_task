@@ -2,6 +2,7 @@ package com.robot.scheduler.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.robot.scheduler.common.StatusConstant;
+import com.robot.scheduler.dto.TaskRankingDTO;
 import com.robot.scheduler.entity.Robot;
 import com.robot.scheduler.entity.Task;
 import com.robot.scheduler.mapper.RobotMapper;
@@ -227,5 +228,16 @@ public class TaskServiceImpl implements TaskService {
 
         log.info("任务 {} 优先级已调整为 {}", taskId, priority);
         return true;
+    }
+
+    @Override
+    public List<TaskRankingDTO> getTaskRankingList() {
+        List<TaskRankingDTO> list = taskMapper.selectTaskRankingList();
+        for (TaskRankingDTO dto : list) {
+            if (dto.getUrgency() != null) {
+                dto.setUrgency(Math.round(dto.getUrgency() * 10.0) / 10.0);
+            }
+        }
+        return list;
     }
 }
