@@ -99,7 +99,11 @@ robot-scheduler/
 │   ├── application.yml                    # 配置文件
 │   └── mapper/                            # Mapper XML 目录
 ├── db_init.sql                            # 数据库初始化脚本
-└── pom.xml                                # Maven 配置
+├── pom.xml                                # Maven 配置
+├── realsense_yolo_csv.py                  # 外部视觉识别脚本（RealSense + YOLOv8）
+└── src/test/java/                         # 联调测试工具（非单元测试）
+    ├── MotionCommTestClient.java          # 运动学算法端 WebSocket 测试客户端
+    └── com/robot/scheduler/...            # 视觉/LLM 测试服务端与客户端
 ```
 
 ---
