@@ -12,6 +12,7 @@ Robot Scheduler 是一个基于 Spring Boot 的机器人任务调度系统，实
 - **LLM 对接**：自然语言指令解析，自动拆分为子任务列表
 - **SLAM 地图**：支持 ROS 标准 `.pgm` + `.yaml` 地图格式解析，MySQL 持久化存储，多地图切换；障碍物/空气墙管理、A* 路径规划；**实时地图快照自动落库（`map_live`），重启可恢复**
 - **ROS2 通信**：通过 rosbridge_suite 实时接收地图/位姿，下发导航目标
+- **视觉-运动学算法对接**：接收视觉识别结果并转发给运动学算法端，逆运动学求解成功后自动创建抓取任务并触发调度
 - **日志记录**：任务完成/失败/状态流转自动记录，异步推送至数据服务
 
 ---
@@ -49,9 +50,13 @@ robot-scheduler/
 │   │   ├── SchedulerExternalController.java # 外部数据服务 API（/scheduler/...）
 │   │   ├── SLAMController.java            # SLAM 地图与路径规划 API
 │   │   ├── LLMController.java             # LLM 自然语言解析 API
-│   │   └── RosBridgeController.java       # ROS2 通信状态与导航目标 API
+│   │   ├── RosBridgeController.java       # ROS2 通信状态与导航目标 API
+│   │   └── MotionController.java          # 视觉-运动学算法通信 API
 │   ├── dto/
-│   │   └── TaskRankingDTO.java            # 任务排行 DTO
+│   │   ├── TaskRankingDTO.java            # 任务排行 DTO
+│   │   ├── ForwardKinematicsResult.java   # 正运动学末端位姿结果
+│   │   ├── InverseKinematicsResult.java   # 逆运动学求解结果
+│   │   └── MotionTargetRequest.java       # 目标物体请求 DTO
 │   ├── entity/                            # 实体类
 │   │   ├── Task.java                      # 任务实体
 │   │   ├── Robot.java                     # 机器人实体
@@ -74,6 +79,7 @@ robot-scheduler/
 │   │   ├── TaskPriorityPlanner.java       # 动态优先级计算
 │   │   ├── DataServiceClient.java         # 数据服务 HTTP 上报客户端
 │   │   ├── LLMService.java                # LLM WebSocket 交互
+│   │   ├── MotionService.java             # 视觉-运动学算法 WebSocket 通信
 │   │   ├── SLAMService.java               # SLAM 地图与路径规划
 │   │   ├── RosBridgeService.java          # ROS2 WebSocket 通信
 │   │   └── StateTrackService.java         # 状态变更追踪
@@ -86,7 +92,9 @@ robot-scheduler/
 │       ├── LLMServiceImpl.java
 │       ├── SLAMServiceImpl.java           # OccupancyGrid + A*
 │       ├── RosBridgeServiceImpl.java      # rosbridge WebSocket 客户端
-│       └── StateTrackServiceImpl.java
+│       ├── StateTrackServiceImpl.java
+│       ├── MotionServiceImpl.java         # 运动学算法 WebSocket 客户端
+│       └── VisionWebSocketHandler.java    # 视觉识别 WebSocket 服务端处理器
 ├── src/main/resources/
 │   ├── application.yml                    # 配置文件
 │   └── mapper/                            # Mapper XML 目录
@@ -534,6 +542,82 @@ Request:
 }
 ```
 
+### 5.7 视觉-运动学算法通信
+
+> 后端同时作为 WebSocket **服务端**（`/ws/vision`，接收视觉识别数据）和 **客户端**（连接运动学算法服务端）。以下 REST 接口用于手动发送目标与查询状态。
+
+#### 发送目标物体给运动学算法端
+```
+POST /api/v1/motion/target
+Content-Type: application/json
+
+Request:
+{
+    "objName": "cup",
+    "x": 1.5,
+    "y": 2.0,
+    "z": 0.8
+}
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "sent": true,
+        "objName": "cup",
+        "x": 1.5,
+        "y": 2.0,
+        "z": 0.8
+    }
+}
+```
+
+#### 查询 WebSocket 连接状态
+```
+GET /api/v1/motion/status
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "connected": true,
+        "url": "ws://localhost:8081/ws/motion",
+        "messageCount": 120,
+        "hasForwardResult": true,
+        "hasInverseResult": true
+    }
+}
+```
+
+#### 查询最近一次正/逆运动学结果
+```
+GET /api/v1/motion/result
+
+Response:
+{
+    "code": 200,
+    "data": {
+        "forwardKinematics": {
+            "targetObj": "cup",
+            "targetPose": {
+                "x": 1.5,
+                "y": 2.0,
+                "z": 0.8,
+                "roll": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.785
+            }
+        },
+        "inverseKinematics": {
+            "targetObj": "cup",
+            "ikSolve": true,
+            "jointCount": 6,
+            "jointValue": [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+        }
+    }
+}
+```
+
 ### 5.7 外部数据服务接口（/scheduler/...）
 
 > 面向数据服务（S-17）的专用接口，供外部系统查询调度器实时状态与控制任务。
@@ -685,6 +769,12 @@ rosbridge:
     pose: /amcl_pose
     goal: /goal_pose
   default-robot-code: ""
+
+# 运动学算法对接配置
+motion:
+  websocket:
+    url: ws://localhost:8081/ws/motion
+    timeout-ms: 10000
 
 # 数据服务（S-17）对接配置
 data-service:
@@ -867,5 +957,5 @@ ros2 launch rosbridge_server rosbridge_websocket_launch.xml
 
 ---
 
-> **文档版本：** v3.3.0  
+> **文档版本：** v3.4.0  
 > **更新日期：** 2026-04-29

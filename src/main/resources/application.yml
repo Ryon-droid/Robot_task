@@ -37,6 +37,12 @@ rosbridge:
     goal: /goal_pose
   default-robot-code: ""
 
+# 运动学算法对接配置
+motion:
+  websocket:
+    url: ws://localhost:8081/ws/motion
+    timeout-ms: 10000
+
 # 数据服务对接配置
 data-service:
   url: http://localhost:8000
