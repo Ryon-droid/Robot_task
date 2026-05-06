@@ -4,6 +4,9 @@ import org.java_websocket.WebSocket;
 import org.java_websocket.handshake.ClientHandshake;
 import org.java_websocket.server.WebSocketServer;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
 import java.net.InetSocketAddress;
 import java.util.Scanner;
 
@@ -18,6 +21,8 @@ import java.util.Scanner;
  * mvn exec:java -Dexec.mainClass="com.robot.scheduler.VisionCommTestServer" -Dexec.classpathScope=test
  */
 public class VisionCommTestServer extends WebSocketServer {
+
+    private static final ObjectMapper mapper = new ObjectMapper();
 
     public VisionCommTestServer(String host, int port) {
         super(new InetSocketAddress(host, port));
@@ -36,13 +41,41 @@ public class VisionCommTestServer extends WebSocketServer {
 
     @Override
     public void onMessage(WebSocket conn, String message) {
-        System.out.println("[测试服务端] 收到消息: " + message);
-
-        // 简单解析 obj_name
-        String objName = extractField(message, "obj_name");
-        if (objName.isEmpty()) {
-            objName = extractField(message, "class");
+        // 解析关键字段，避免直接打印完整的 base64 图片导致刷屏
+        String objName = "";
+        String x = "";
+        String y = "";
+        String z = "";
+        String detected = "";
+        try {
+            JsonNode root = mapper.readTree(message);
+            JsonNode node = root.get("obj_name");
+            if (node != null && !node.isNull()) objName = node.asText();
+            if (objName.isEmpty()) {
+                node = root.get("class");
+                if (node != null && !node.isNull()) objName = node.asText();
+            }
+            node = root.get("x");
+            if (node != null && !node.isNull()) x = node.toString();
+            node = root.get("y");
+            if (node != null && !node.isNull()) y = node.toString();
+            node = root.get("z");
+            if (node != null && !node.isNull()) z = node.toString();
+            node = root.get("detected");
+            if (node != null && !node.isNull()) detected = node.toString();
+        } catch (Exception e) {
+            System.err.println("[测试服务端] JSON解析失败: " + e.getMessage());
         }
+
+        StringBuilder sb = new StringBuilder("[测试服务端] 收到消息");
+        if (!objName.isEmpty()) sb.append(" | class: ").append(objName);
+        if (!x.isEmpty()) sb.append(" | x: ").append(x);
+        if (!y.isEmpty()) sb.append(" | y: ").append(y);
+        if (!z.isEmpty()) sb.append(" | z: ").append(z);
+        if (!detected.isEmpty()) sb.append(" | detected: ").append(detected);
+        sb.append(" | length: ").append(message.length());
+        System.out.println(sb.toString());
+
         if (!objName.isEmpty()) {
             System.out.println("[测试服务端] 解析成功 → obj_name/class: " + objName);
         }
@@ -62,22 +95,6 @@ public class VisionCommTestServer extends WebSocketServer {
         System.out.println("[测试服务端] 已启动: ws://" + getAddress() + "/ws/vision");
         System.out.println("[测试服务端] 请让视觉端连接上述地址并发送数据");
         System.out.println("[测试服务端] 按 Enter 停止");
-    }
-
-    private String extractField(String json, String key) {
-        int idx = json.indexOf("\"" + key + "\"");
-        if (idx < 0) return "";
-        int colon = json.indexOf(":", idx);
-        int start = json.indexOf("\"", colon);
-        if (start < 0) {
-            // 可能是数字，不是字符串
-            int comma = json.indexOf(",", colon);
-            int brace = json.indexOf("}", colon);
-            int end = Math.min(comma > 0 ? comma : Integer.MAX_VALUE, brace > 0 ? brace : Integer.MAX_VALUE);
-            return json.substring(colon + 1, end).trim();
-        }
-        int end = json.indexOf("\"", start + 1);
-        return (end > start) ? json.substring(start + 1, end) : "";
     }
 
     public static void main(String[] args) {

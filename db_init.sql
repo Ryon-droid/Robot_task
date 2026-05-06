@@ -144,3 +144,111 @@ CREATE TABLE map_live
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_unicode_ci COMMENT ='SLAM 实时地图快照表';
+
+
+-- ----------------------------
+-- 表：vision_detection（视觉识别结果）
+-- ----------------------------
+DROP TABLE IF EXISTS vision_detection;
+CREATE TABLE vision_detection
+(
+    detection_id    VARCHAR(36)     NOT NULL COMMENT '识别记录ID（程序生成UUID）',
+    obj_name        VARCHAR(64)     NULL COMMENT '物体名称',
+    cx              INT             NULL COMMENT '像素坐标X',
+    cy              INT             NULL COMMENT '像素坐标Y',
+    x               DOUBLE          NULL COMMENT '世界坐标X / 深度图X',
+    y               DOUBLE          NULL COMMENT '世界坐标Y / 深度图Y',
+    z               DOUBLE          NULL COMMENT '深度值Z（米）',
+    confidence      DOUBLE          NULL COMMENT '置信度',
+    source          VARCHAR(32)     NULL DEFAULT 'websocket' COMMENT '数据来源',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (detection_id),
+    INDEX idx_obj_name (obj_name),
+    INDEX idx_create_time (create_time)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='视觉识别结果表';
+
+-- ----------------------------
+-- 表：motion_kinematics（运动学正逆解结果）
+-- ----------------------------
+DROP TABLE IF EXISTS motion_kinematics;
+CREATE TABLE motion_kinematics
+(
+    kinematics_id   VARCHAR(36)     NOT NULL COMMENT '运动学记录ID（程序生成UUID）',
+    detection_id    VARCHAR(36)     NULL COMMENT '关联视觉识别ID',
+    task_id         VARCHAR(36)     NULL COMMENT '关联生成的任务ID',
+    fk_target_pose  JSON            NULL COMMENT '正运动学末端位姿（JSON）',
+    ik_solve        TINYINT         NULL DEFAULT 0 COMMENT '逆运动学是否求解成功 0/1',
+    ik_joint_angles JSON            NULL COMMENT '逆运动学关节角（JSON数组）',
+    ik_message      VARCHAR(256)    NULL COMMENT '逆运动学求解信息',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (kinematics_id),
+    INDEX idx_detection_id (detection_id),
+    INDEX idx_task_id (task_id)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='运动学结果表';
+
+-- ----------------------------
+-- 表：llm_communication（LLM 通信记录）
+-- ----------------------------
+DROP TABLE IF EXISTS llm_communication;
+CREATE TABLE llm_communication
+(
+    msg_id           VARCHAR(36)     NOT NULL COMMENT '消息记录ID（程序生成UUID）',
+    action           VARCHAR(64)     NULL COMMENT '动作类型：parse_natural_language / combine_tasks / get_behavior_tree_status / execute_behavior_node 等',
+    request_content  TEXT            NULL COMMENT '发送给LLM的请求内容',
+    response_content TEXT            NULL COMMENT 'LLM返回的响应内容',
+    status           VARCHAR(16)     NULL DEFAULT 'PENDING' COMMENT '状态：PENDING / SUCCESS / FAILED',
+    duration_ms      INT             NULL COMMENT '通信耗时（毫秒）',
+    create_time      DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (msg_id),
+    INDEX idx_action (action),
+    INDEX idx_status (status)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='LLM通信记录表';
+
+-- ----------------------------
+-- 表：ros_navigation_goal（ROS 导航目标记录）
+-- ----------------------------
+DROP TABLE IF EXISTS ros_navigation_goal;
+CREATE TABLE ros_navigation_goal
+(
+    goal_id         VARCHAR(36)     NOT NULL COMMENT '目标ID（程序生成UUID）',
+    robot_id        VARCHAR(36)     NULL COMMENT '机器人ID',
+    robot_code      VARCHAR(64)     NULL COMMENT '机器人编码',
+    x               DOUBLE          NOT NULL COMMENT '目标X坐标（米）',
+    y               DOUBLE          NOT NULL COMMENT '目标Y坐标（米）',
+    yaw             DOUBLE          NULL COMMENT '目标偏航角（弧度）',
+    status          VARCHAR(16)     NOT NULL DEFAULT 'PENDING' COMMENT '状态：PENDING / ACTIVE / COMPLETED / FAILED',
+    send_time       DATETIME        NULL COMMENT '发送时间',
+    complete_time   DATETIME        NULL COMMENT '完成时间',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    PRIMARY KEY (goal_id),
+    INDEX idx_robot_id (robot_id),
+    INDEX idx_status (status)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='ROS导航目标表';
+
+-- ----------------------------
+-- 表：robot_pose_history（机器人位姿历史）
+-- ----------------------------
+DROP TABLE IF EXISTS robot_pose_history;
+CREATE TABLE robot_pose_history
+(
+    history_id      BIGINT          NOT NULL AUTO_INCREMENT COMMENT '历史记录ID',
+    robot_id        VARCHAR(36)     NULL COMMENT '机器人ID',
+    x               DOUBLE          NULL COMMENT '位置X坐标（米）',
+    y               DOUBLE          NULL COMMENT '位置Y坐标（米）',
+    yaw             DOUBLE          NULL COMMENT '朝向角度（弧度）',
+    source          VARCHAR(32)     NULL DEFAULT 'ROS_HTTP' COMMENT '数据来源：ROS_HTTP / MANUAL / TEST',
+    create_time     DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '记录时间',
+    PRIMARY KEY (history_id),
+    INDEX idx_robot_id (robot_id),
+    INDEX idx_create_time (create_time)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_unicode_ci COMMENT ='机器人位姿历史表';

@@ -42,7 +42,8 @@ robot-scheduler/
 │   │   └── GlobalExceptionHandler.java    # 全局异常处理
 │   ├── config/
 │   │   ├── CorsConfig.java                # 跨域配置
-│   │   └── AsyncConfig.java               # 异步线程池配置（数据上报）
+│   │   ├── AsyncConfig.java               # 异步线程池配置（数据上报）
+│   │   └── WebSocketServerConfig.java     # WebSocket 服务端配置（接收视觉识别数据）
 │   ├── controller/                        # 控制器层
 │   │   ├── NewTaskController.java         # 任务管理 API（前端）
 │   │   ├── RobotController.java           # 机器人管理 API（前端）
@@ -196,6 +197,18 @@ robot-scheduler/
 | grid_data | LONGTEXT | 实时栅格数据（JSON 数组） |
 | obstacles | LONGTEXT | 障碍物列表（JSON） |
 | update_time | DATETIME | 更新时间 |
+
+### 3.7 预留数据表（代码中暂无实体类，供联调测试与数据持久化预留）
+
+> 以下表在 `db_init.sql` 中已定义，但当前 Java 代码中**无对应 Entity/Mapper**，主要用于 `src/test/java` 下的联调测试程序直接通过 JDBC 操作，或供后续扩展。
+
+| 表名 | 用途 |
+|------|------|
+| `vision_detection` | 视觉识别结果（物体名称、像素坐标、世界坐标、置信度） |
+| `motion_kinematics` | 运动学正逆解结果（FK 末端位姿、IK 关节角、求解状态） |
+| `llm_communication` | LLM 通信记录（请求/响应内容、耗时、状态） |
+| `ros_navigation_goal` | ROS 导航目标记录（目标坐标、下发状态、完成时间） |
+| `robot_pose_history` | 机器人位姿历史（ROS HTTP 轮询轨迹存档） |
 
 ---
 
@@ -787,6 +800,19 @@ data-service:
     backoff-multiplier: 1000
 ```
 
+| 配置项 | 说明 |
+|--------|------|
+| `scheduler.priority.weight.*` | 动态优先级 5 个因子的权重 |
+| `scheduler.priority.recalculation-interval-ms` | 优先级自动重算间隔（毫秒） |
+| `llm.websocket.url` | 外部 LLM 服务 WebSocket 地址 |
+| `llm.websocket.timeout-ms` | LLM 请求超时（毫秒） |
+| `rosbridge.http.url` | SLAM HTTP 服务端地址 |
+| `rosbridge.default-robot-code` | 默认机器人编码，用于位姿更新映射 |
+| `motion.websocket.url` | 运动学算法服务端 WebSocket 地址 |
+| `motion.websocket.timeout-ms` | 运动学算法连接超时（毫秒） |
+| `data-service.url` | 数据服务（S-17）上报地址 |
+| `data-service.retry.max-attempts` | 上报失败最大重试次数 |
+
 ---
 
 ## 八、数据服务对接架构
@@ -943,7 +969,10 @@ CREATE TABLE map_live (
 # 3. 启动应用
 mvn spring-boot:run
 
-# 4. 访问 API
+# 4. 本地开发（无需 MySQL，使用 H2 内存数据库）
+mvn spring-boot:run -Dspring-boot.run.profiles=local
+
+# 5. 访问 API
 http://localhost:8080
 ```
 
@@ -958,5 +987,5 @@ ros2 launch cod_bringup scheduler_bridge.launch.py http_port:=9090
 
 ---
 
-> **文档版本：** v3.4.0  
-> **更新日期：** 2026-04-29
+> **文档版本：** v3.5.0  
+> **更新日期：** 2026-05-06

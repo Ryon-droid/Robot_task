@@ -1,3 +1,4 @@
+package com.robot.scheduler;
 import org.java_websocket.client.WebSocketClient;
 import org.java_websocket.handshake.ServerHandshake;
 
